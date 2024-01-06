@@ -29,18 +29,30 @@ export default class GroupCollab<SocketMethodName extends string> {
     private socket: INeededSocketFields<SocketMethodName>
     private socketMethodName: SocketMethodName
     private editorBlockEvent = 'block changed'
+    private _isListening = false
     public constructor({ editor, socket, socketMethodName }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
         this.socket = socket
         this.socketMethodName = socketMethodName
 
-        this.socket.on(socketMethodName, this.receiveChange)
-        this.editor.on(this.editorBlockEvent, this.blockListener.bind(this))
+        this.socket.on(this.socketMethodName, this.receiveChange)
+        this.editor.on(this.editorBlockEvent, this.blockListener)
+        this._isListening = true
     }
 
-    public destroy() {
+    public isListening() {
+        return this._isListening
+    }
+
+    public off() {
         this.socket.off(this.socketMethodName)
         this.editor.off(this.editorBlockEvent, this.blockListener)
+        this._isListening = false
+    }
+    public on() {
+        this.socket.on(this.socketMethodName, this.receiveChange)
+        this.editor.on(this.editorBlockEvent, this.blockListener)
+        this._isListening = true
     }
 
     private receiveChange(response: readonly [eventName: Events, data: MessageData]) {

@@ -22,8 +22,11 @@ export default class GroupCollab<SocketMethodName extends string> {
     private socket;
     private socketMethodName;
     private editorBlockEvent;
+    private _isListening;
     constructor({ editor, socket, socketMethodName }: GroupCollabConfigOptions<SocketMethodName>);
-    destroy(): void;
+    isListening(): boolean;
+    off(): void;
+    on(): void;
     private receiveChange;
     private blockListener;
     private validateEventDetail;
