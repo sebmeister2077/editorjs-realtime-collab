@@ -6,7 +6,7 @@ module.exports = {
     output: {
         filename: 'bundle.js', // Output bundle file name
         path: path.join(__dirname, '/dist'),
-        library: 'IndentPlugin',
+        library: 'GroupCollabPlugin',
         libraryTarget: 'umd',
         libraryExport: 'default',
     },
