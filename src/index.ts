@@ -7,6 +7,7 @@ import EditorJS, {
     type BlockMutationEventMap,
     BlockAPI,
 } from '@editorjs/editorjs'
+import { type SavedData } from '@editorjs/editorjs/types/data-formats/block-data'
 
 export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     editor: EditorJS
@@ -14,48 +15,47 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     socketMethodName: SocketMethodName
 }
 
-export type MessageData = { editorjsData: EventDetails }
-type EventDetails = { index: number; target: Pick<BlockAPI, 'name' | 'id' | 'selected'> }
+export type MessageData = { editorjsData: { index: number; block: SavedData } }
+type EventDetails = { index: number; target: BlockAPI }
 // const conn = new SignalR.HubConnectionBuilder().withUrl('https://localhost:7244/myHubPath').build()
 
 type Events = keyof BlockMutationEventMap
 export type INeededSocketFields<SocketMethodName extends string> = {
     send(socketMethod: SocketMethodName, data: readonly [eventName: Events, message: MessageData]): void
-    on(socketMethod: SocketMethodName, data: (data: readonly [eventName: Events, message: MessageData]) => void): void
+    on(socketMethod: SocketMethodName, data: (...data: readonly [eventName: Events, message: MessageData]) => void): void
     off(socketMethod: SocketMethodName): void
 }
 export default class GroupCollab<SocketMethodName extends string> {
     private editor: EditorJS
     private socket: INeededSocketFields<SocketMethodName>
     private socketMethodName: SocketMethodName
-    private editorBlockEvent = 'block changed'
+    private editorBlockEvent = 'block changed' // this might need more investigation
     private _isListening = false
     public constructor({ editor, socket, socketMethodName }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
         this.socket = socket
         this.socketMethodName = socketMethodName
 
-        this.socket.on(this.socketMethodName, this.receiveChange)
-        this.editor.on(this.editorBlockEvent, this.blockListener)
-        this._isListening = true
+        this.listen()
     }
 
     public isListening() {
         return this._isListening
     }
 
-    public off() {
+    public unlisten() {
         this.socket.off(this.socketMethodName)
         this.editor.off(this.editorBlockEvent, this.blockListener)
         this._isListening = false
     }
-    public on() {
+
+    public listen() {
         this.socket.on(this.socketMethodName, this.receiveChange)
         this.editor.on(this.editorBlockEvent, this.blockListener)
         this._isListening = true
     }
 
-    private receiveChange(response: readonly [eventName: Events, data: MessageData]) {
+    private receiveChange(...response: readonly [eventName: Events, data: MessageData]) {
         console.log(...response)
     }
 
@@ -64,14 +64,27 @@ export default class GroupCollab<SocketMethodName extends string> {
             console.error('block changed but its not custom event')
             return
         }
-
         const { event } = data
         if (!this.validateEventDetail(event)) return
         const type = event.type as Events
-        const { target } = event.detail as EventDetails
-        const details = { ...event.detail, target: { id: target.id, name: target.name, selected: target.selected } }
+        const { target, index } = event.detail as EventDetails
 
-        this.socket.send(this.socketMethodName, [type, { editorjsData: details }])
+        //save after dom changes have been progapated to the necessary tools
+        setTimeout(() => {
+            target.save().then((savedData: any) => {
+                if (!savedData) return
+
+                this.socket.send(this.socketMethodName, [
+                    type,
+                    {
+                        editorjsData: {
+                            index,
+                            block: savedData,
+                        },
+                    },
+                ])
+            })
+        }, 0)
     }
     private validateEventDetail(ev: CustomEvent): ev is CustomEvent<EventDetails> {
         return (
