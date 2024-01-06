@@ -5,6 +5,7 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     editor: EditorJS;
     socket: INeededSocketFields<SocketMethodName>;
     socketMethodName: SocketMethodName;
+    blockChangeThrottleDelay: number;
 };
 export type MessageData = {
     block: SavedData;
@@ -28,11 +29,14 @@ export default class GroupCollab<SocketMethodName extends string> {
     private editorBlockEvent;
     private _isListening;
     private ignoreEvents;
-    constructor({ editor, socket, socketMethodName }: GroupCollabConfigOptions<SocketMethodName>);
+    private blockChangeThrottleDelay;
+    constructor({ editor, socket, socketMethodName, blockChangeThrottleDelay }: GroupCollabConfigOptions<SocketMethodName>);
     get isListening(): boolean;
     unlisten(): void;
     listen(): void;
     private receiveChange;
     private blockListener;
     private validateEventDetail;
+    private addBlockToIgnorelist;
+    private removeBlockFromIgnorelist;
 }

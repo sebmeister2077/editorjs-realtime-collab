@@ -14,11 +14,20 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     editor: EditorJS
     socket: INeededSocketFields<SocketMethodName>
     socketMethodName: SocketMethodName
+    blockChangeThrottleDelay: number
 }
 
 export type MessageData = { block: SavedData } & (
     | MakeConditionalType<{ index: number }, typeof BlockAddedMutationType, 'type'>
-    | MakeConditionalType<{ blockId: string }, typeof BlockChangedMutationType | typeof BlockRemovedMutationType, 'type'>
+    | MakeConditionalType<
+          {
+              blockId: string
+              // in case blockId is not found
+              // index: number
+          },
+          typeof BlockChangedMutationType | typeof BlockRemovedMutationType,
+          'type'
+      >
     | MakeConditionalType<{ fromBlockId: string; toBlockId: string }, typeof BlockMovedMutationType, 'type'>
 )
 type PossibleEventDetails = {
@@ -45,11 +54,13 @@ export default class GroupCollab<SocketMethodName extends string> {
     private socketMethodName: SocketMethodName
     private editorBlockEvent = 'block changed' // this might need more investigation
     private _isListening = false
-    private ignoreEvents: Record<string, Events[]> = {}
-    public constructor({ editor, socket, socketMethodName }: GroupCollabConfigOptions<SocketMethodName>) {
+    private ignoreEvents: Record<string, Set<Events>> = {}
+    private blockChangeThrottleDelay: number
+    public constructor({ editor, socket, socketMethodName, blockChangeThrottleDelay = 300 }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
         this.socket = socket
         this.socketMethodName = socketMethodName
+        this.blockChangeThrottleDelay = blockChangeThrottleDelay
 
         this.listen()
     }
@@ -72,20 +83,21 @@ export default class GroupCollab<SocketMethodName extends string> {
 
     private receiveChange = (response: MessageData) => {
         // console.log(response)
-        const { block } = response
+        const { block, type } = response
 
-        this.ignoreEvents[block.id] = [...(this.ignoreEvents[block.id] ?? []), response.type]
+        const blockId = block.id
+        this.addBlockToIgnorelist(blockId, type)
         setTimeout(() => {
-            delete this.ignoreEvents[block.id]
+            this.removeBlockFromIgnorelist(blockId, type)
         }, 0)
         switch (response.type) {
-            case BlockAddedMutationType: {
+            case 'block-added': {
                 const { index } = response
-                this.editor.blocks.insert(block.tool, block.data, null, index, false, false, block.id)
+                this.editor.blocks.insert(block.tool, block.data, null, index, false, false, blockId)
                 break
             }
             case 'block-changed': {
-                this.editor.blocks.update(block.id, block.data)
+                this.editor.blocks.update(blockId, block.data)
                 break
             }
             case 'block-moved': {
@@ -98,7 +110,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             }
 
             case 'block-removed': {
-                const blockIndex = this.editor.blocks.getBlockIndex(block.id)
+                const blockIndex = this.editor.blocks.getBlockIndex(blockId)
                 this.editor.blocks.delete(blockIndex)
                 break
             }
@@ -119,7 +131,7 @@ export default class GroupCollab<SocketMethodName extends string> {
         otherData.type = type
         const targetId = target.id
 
-        if (this.ignoreEvents[targetId]?.includes(type)) return
+        if (this.ignoreEvents[targetId]?.has(type)) return
         //save after dom changes have been progapated to the necessary tools
         setTimeout(async () => {
             const savedData = await target.save()
@@ -139,6 +151,14 @@ export default class GroupCollab<SocketMethodName extends string> {
                 socketData.toBlockId = this.editor.blocks.getBlockByIndex(fromIndex)?.id
             }
             this.socket.send(this.socketMethodName, socketData as MessageData)
+
+            if (socketData.type === 'block-changed') {
+                this.addBlockToIgnorelist(targetId, 'block-changed')
+                // throttle
+                setTimeout(() => {
+                    this.removeBlockFromIgnorelist(targetId, 'block-changed')
+                }, this.blockChangeThrottleDelay)
+            }
         }, 0)
     }
     private validateEventDetail(ev: CustomEvent): ev is CustomEvent<PossibleEventDetails> {
@@ -154,5 +174,14 @@ export default class GroupCollab<SocketMethodName extends string> {
             typeof ev.detail.target === 'object' &&
             ev.detail.target
         )
+    }
+
+    private addBlockToIgnorelist(blockId: string, type: Events) {
+        if (!this.ignoreEvents[blockId]) this.ignoreEvents[blockId] = new Set<Events>()
+        this.ignoreEvents[blockId].add(type)
+    }
+    private removeBlockFromIgnorelist(blockId: string, type: Events) {
+        this.ignoreEvents[blockId].delete(type)
+        if (!this.ignoreEvents[blockId].size) delete this.ignoreEvents[blockId]
     }
 }
