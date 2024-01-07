@@ -44,6 +44,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private socket;
     private socketMethodName;
     private editorBlockEvent;
+    private editorDomChangedEvent;
     private _isListening;
     private ignoreEvents;
     private blockChangeThrottleDelay;
@@ -57,7 +58,8 @@ export default class GroupCollab<SocketMethodName extends string> {
      * Manually listen for editor and socket events. This is called by default
      */
     listen(): void;
-    private onSelectionChange;
+    private onBlockSelectionChange;
+    private onInlineSelectionChange;
     private onReceiveChange;
     private onEditorBlockEvent;
     private initBlockChangeListener;
@@ -66,5 +68,6 @@ export default class GroupCollab<SocketMethodName extends string> {
     private addBlockToIgnoreListUntilNextRender;
     private addBlockToIgnorelist;
     private removeBlockFromIgnorelist;
+    private isNodeInsideOfEditor;
 }
 export {};

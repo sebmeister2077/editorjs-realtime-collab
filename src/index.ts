@@ -75,6 +75,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private socket: INeededSocketFields<SocketMethodName>
     private socketMethodName: SocketMethodName
     private editorBlockEvent = 'block changed' // this might need more investigation
+    private editorDomChangedEvent = 'redactor dom changed' // this might need more investigation
     private _isListening = false
     private ignoreEvents: Record<string, Set<EditorEvents>> = {}
     private blockChangeThrottleDelay: number
@@ -97,7 +98,8 @@ export default class GroupCollab<SocketMethodName extends string> {
     public unlisten() {
         this.socket.off(this.socketMethodName)
         this.editor.off(this.editorBlockEvent, this.onEditorBlockEvent)
-        document.removeEventListener('selectionchange', this.onSelectionChange)
+        // this.editor.off(this.editorDomChangedEvent, this.onBlockSelectionChange)
+        // document.removeEventListener('selectionchange', this.onInlineSelectionChange)
         this._isListening = false
     }
     /**
@@ -106,13 +108,24 @@ export default class GroupCollab<SocketMethodName extends string> {
     public listen() {
         this.socket.on(this.socketMethodName, this.onReceiveChange)
         this.editor.on(this.editorBlockEvent, this.onEditorBlockEvent)
-        document.addEventListener('selectionchange', this.onSelectionChange)
+        // this.editor.on(this.editorDomChangedEvent, this.onBlockSelectionChange)
+        // document.addEventListener('selectionchange', this.onInlineSelectionChange)
         this._isListening = true
     }
 
-    private onSelectionChange = (e: Event) => {
+    private onBlockSelectionChange = ({ mutations }: { mutations: MutationRecord[] }) => {
+        console.log('🚀 ~ file: index.ts:117 ~ GroupCollab<SocketMethodName ~ mutations:', ...mutations)
+    }
+    private onInlineSelectionChange = (e: Event) => {
         const selection = document.getSelection()
-        if (!selection) console.log(e)
+        if (!selection) return
+
+        // console.log(selection)
+        if (selection && this.isNodeInsideOfEditor(selection.anchorNode!)) {
+            // console.log('inside of editor')
+            return
+        }
+        // console.log('NOT inside of editor')
     }
 
     private onReceiveChange = (response: MessageData) => {
@@ -248,5 +261,22 @@ export default class GroupCollab<SocketMethodName extends string> {
     private removeBlockFromIgnorelist(blockId: string, type: EditorEvents) {
         this.ignoreEvents[blockId].delete(type)
         if (!this.ignoreEvents[blockId].size) delete this.ignoreEvents[blockId]
+    }
+
+    private isNodeInsideOfEditor(node: Node) {
+        const redactor = (this.editor as any)?.ui?.nodes?.redactor
+        if (redactor instanceof HTMLElement) return redactor.contains(node)
+        const holder = (this.editor as any)?.configuration?.holder
+        if (holder && typeof holder === 'string') return document.getElementById(holder)?.contains(node)
+
+        let currentElement = node.parentElement
+        while (currentElement && currentElement !== document.body) {
+            const blockId = currentElement.getAttribute('data-id')
+            const isEditorBlockElement = currentElement.classList.contains(this.editor.styles.block)
+            const isCurrentEditorElement = blockId && Boolean(this.editor.blocks.getById(blockId))
+            if (isEditorBlockElement && isCurrentEditorElement) return true
+            currentElement = currentElement.parentElement
+        }
+        return false
     }
 }
