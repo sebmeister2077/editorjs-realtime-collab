@@ -1,7 +1,8 @@
 import EditorJS, { BlockAddedMutationType, BlockRemovedMutationType, BlockMovedMutationType, BlockChangedMutationType } from '@editorjs/editorjs';
 import { type SavedData } from '@editorjs/editorjs/types/data-formats/block-data';
 import { type MakeConditionalType } from './UtilityTypes';
-declare const UserSelectionChangeType = "selection-change";
+declare const UserInlineSelectionChangeType = "inline-selection-change";
+declare const UserBlockSelectionChangeType = "block-selection-change";
 export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     editor: EditorJS;
     socket: INeededSocketFields<SocketMethodName>;
@@ -16,7 +17,7 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
      */
     blockChangeThrottleDelay?: number;
 };
-export type MessageData = {} & (MakeConditionalType<{
+export type MessageData = MakeConditionalType<{
     index: number;
     block: SavedData;
 }, typeof BlockAddedMutationType> | MakeConditionalType<{
@@ -31,9 +32,10 @@ export type MessageData = {} & (MakeConditionalType<{
     blockId: string;
     startIndex: number;
     endIndex: number;
-} | {
-    blockIds: string[];
-}, typeof UserSelectionChangeType>);
+}, typeof UserInlineSelectionChangeType> | MakeConditionalType<{
+    blockId: string;
+    isSelected: boolean;
+}, typeof UserBlockSelectionChangeType>;
 export type INeededSocketFields<SocketMethodName extends string> = {
     send(socketMethod: SocketMethodName, data: MessageData): void;
     on(socketMethod: SocketMethodName, callback: (data: MessageData) => void): void;
@@ -48,6 +50,8 @@ export default class GroupCollab<SocketMethodName extends string> {
     private _isListening;
     private ignoreEvents;
     private blockChangeThrottleDelay;
+    private observer;
+    private localBlockStates;
     constructor({ editor, socket, socketMethodName, blockChangeThrottleDelay }: GroupCollabConfigOptions<SocketMethodName>);
     get isListening(): boolean;
     /**
@@ -58,7 +62,9 @@ export default class GroupCollab<SocketMethodName extends string> {
      * Manually listen for editor and socket events. This is called by default
      */
     listen(): void;
-    private onBlockSelectionChange;
+    private get CSS();
+    private get EditorCSS();
+    private handleMutation;
     private onInlineSelectionChange;
     private onReceiveChange;
     private onEditorBlockEvent;
@@ -68,6 +74,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private addBlockToIgnoreListUntilNextRender;
     private addBlockToIgnorelist;
     private removeBlockFromIgnorelist;
+    private getDOMBlockById;
     private isNodeInsideOfEditor;
 }
 export {};
