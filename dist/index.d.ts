@@ -1,6 +1,7 @@
 import EditorJS, { BlockAddedMutationType, BlockRemovedMutationType, BlockMovedMutationType, BlockChangedMutationType } from '@editorjs/editorjs';
 import { type SavedData } from '@editorjs/editorjs/types/data-formats/block-data';
 import { type MakeConditionalType } from './UtilityTypes';
+declare const UserSelectionChangeType = "selection-change";
 export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     editor: EditorJS;
     socket: INeededSocketFields<SocketMethodName>;
@@ -15,19 +16,24 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
      */
     blockChangeThrottleDelay: number;
 };
-export type MessageData = {
-    block: SavedData;
-} & (MakeConditionalType<{
+export type MessageData = {} & (MakeConditionalType<{
     index: number;
-}, typeof BlockAddedMutationType, 'type'> | MakeConditionalType<{
+    block: SavedData;
+}, typeof BlockAddedMutationType> | MakeConditionalType<{
     blockId: string;
 }, typeof BlockRemovedMutationType, 'type'> | MakeConditionalType<{
-    blockId: string;
+    block: SavedData;
     index: number;
-}, typeof BlockChangedMutationType, 'type'> | MakeConditionalType<{
+}, typeof BlockChangedMutationType> | MakeConditionalType<{
     fromBlockId: string;
     toBlockId: string;
-}, typeof BlockMovedMutationType, 'type'>);
+}, typeof BlockMovedMutationType> | MakeConditionalType<{
+    blockId: string;
+    startIndex: number;
+    endIndex: number;
+} | {
+    blockIds: string[];
+}, typeof UserSelectionChangeType>);
 export type INeededSocketFields<SocketMethodName extends string> = {
     send(socketMethod: SocketMethodName, data: MessageData): void;
     on(socketMethod: SocketMethodName, callback: (data: MessageData) => void): void;
@@ -51,8 +57,9 @@ export default class GroupCollab<SocketMethodName extends string> {
      * Manually listen for editor and socket events. This is called by default
      */
     listen(): void;
-    private receiveChange;
-    private blockListener;
+    private onSelectionChange;
+    private onReceiveChange;
+    private onEditorBlockEvent;
     private initBlockChangeListener;
     private handleBlockChange?;
     private validateEventDetail;
@@ -60,3 +67,4 @@ export default class GroupCollab<SocketMethodName extends string> {
     private addBlockToIgnorelist;
     private removeBlockFromIgnorelist;
 }
+export {};

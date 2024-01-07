@@ -11,6 +11,7 @@ import { type SavedData } from '@editorjs/editorjs/types/data-formats/block-data
 import { PickFromConditionalType, type MakeConditionalType } from './UtilityTypes'
 import { throttle } from 'throttle-debounce'
 
+const UserSelectionChangeType = 'selection-change'
 export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     editor: EditorJS
     socket: INeededSocketFields<SocketMethodName>
@@ -26,8 +27,8 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     blockChangeThrottleDelay: number
 }
 
-export type MessageData = { block: SavedData } & (
-    | MakeConditionalType<{ index: number }, typeof BlockAddedMutationType, 'type'>
+export type MessageData = {} & (
+    | MakeConditionalType<{ index: number; block: SavedData }, typeof BlockAddedMutationType>
     | MakeConditionalType<
           {
               blockId: string
@@ -37,14 +38,17 @@ export type MessageData = { block: SavedData } & (
       >
     | MakeConditionalType<
           {
-              blockId: string
-              // in case blockId is not found
+              block: SavedData
+              // in case block.id is not found
               index: number
           },
-          typeof BlockChangedMutationType,
-          'type'
+          typeof BlockChangedMutationType
       >
-    | MakeConditionalType<{ fromBlockId: string; toBlockId: string }, typeof BlockMovedMutationType, 'type'>
+    | MakeConditionalType<{ fromBlockId: string; toBlockId: string }, typeof BlockMovedMutationType>
+    | MakeConditionalType<
+          { blockId: string; startIndex: number; endIndex: number } | { blockIds: string[] },
+          typeof UserSelectionChangeType
+      >
 )
 type PossibleEventDetails = {
     target: BlockAPI
@@ -58,7 +62,9 @@ type PossibleEventDetails = {
 )
 // const conn = new SignalR.HubConnectionBuilder().withUrl('https://localhost:7244/myHubPath').build()
 
-type Events = keyof BlockMutationEventMap
+type EditorEvents = keyof BlockMutationEventMap
+type Events = EditorEvents | typeof UserSelectionChangeType
+
 export type INeededSocketFields<SocketMethodName extends string> = {
     send(socketMethod: SocketMethodName, data: MessageData): void
     on(socketMethod: SocketMethodName, callback: (data: MessageData) => void): void
@@ -70,7 +76,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private socketMethodName: SocketMethodName
     private editorBlockEvent = 'block changed' // this might need more investigation
     private _isListening = false
-    private ignoreEvents: Record<string, Set<Events>> = {}
+    private ignoreEvents: Record<string, Set<EditorEvents>> = {}
     private blockChangeThrottleDelay: number
     public constructor({ editor, socket, socketMethodName, blockChangeThrottleDelay = 500 }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
@@ -85,40 +91,44 @@ export default class GroupCollab<SocketMethodName extends string> {
     public get isListening() {
         return this._isListening
     }
-
     /**
      * Remove event listeners on socket and editor
      */
     public unlisten() {
         this.socket.off(this.socketMethodName)
-        this.editor.off(this.editorBlockEvent, this.blockListener)
+        this.editor.off(this.editorBlockEvent, this.onEditorBlockEvent)
+        document.removeEventListener('selectionchange', this.onSelectionChange)
         this._isListening = false
     }
     /**
      * Manually listen for editor and socket events. This is called by default
      */
     public listen() {
-        this.socket.on(this.socketMethodName, this.receiveChange)
-        this.editor.on(this.editorBlockEvent, this.blockListener)
+        this.socket.on(this.socketMethodName, this.onReceiveChange)
+        this.editor.on(this.editorBlockEvent, this.onEditorBlockEvent)
+        document.addEventListener('selectionchange', this.onSelectionChange)
         this._isListening = true
     }
 
-    private receiveChange = (response: MessageData) => {
-        const { block, type } = response
+    private onSelectionChange = (e: Event) => {
+        const selection = document.getSelection()
+        if (!selection) console.log(e)
+    }
 
-        const blockId = block.id
-        this.addBlockToIgnoreListUntilNextRender(blockId, type)
+    private onReceiveChange = (response: MessageData) => {
         switch (response.type) {
             case 'block-added': {
-                const { index } = response
-                this.editor.blocks.insert(block.tool, block.data, null, index, false, false, blockId)
+                const { index, block } = response
+                this.addBlockToIgnoreListUntilNextRender(block.id, response.type)
+                this.editor.blocks.insert(block.tool, block.data, null, index, false, false, block.id)
                 break
             }
             case 'block-changed': {
-                const { index } = response
-                this.editor.blocks.update(blockId, block.data).catch((e) => {
-                    if (e.message === `Block with id "${blockId}" not found`) {
-                        this.addBlockToIgnoreListUntilNextRender(blockId, 'block-added')
+                const { index, block } = response
+                this.addBlockToIgnoreListUntilNextRender(block.id, response.type)
+                this.editor.blocks.update(block.id, block.data).catch((e) => {
+                    if (e.message === `Block with id "${block.id}" not found`) {
+                        this.addBlockToIgnoreListUntilNextRender(block.id, 'block-added')
                         this.editor.blocks.insert(block.tool, block.data, null, index, false, false, block.id)
                     }
                 })
@@ -129,28 +139,34 @@ export default class GroupCollab<SocketMethodName extends string> {
                 const toIndex = this.editor.blocks.getBlockIndex(toBlockId)
                 const fromIndex = this.editor.blocks.getBlockIndex(fromBlockId)
 
+                this.addBlockToIgnoreListUntilNextRender(fromBlockId, response.type)
                 this.editor.blocks.move(toIndex, fromIndex)
                 break
             }
 
             case 'block-removed': {
+                const { blockId } = response
+                this.addBlockToIgnoreListUntilNextRender(blockId, response.type)
                 const blockIndex = this.editor.blocks.getBlockIndex(blockId)
                 this.editor.blocks.delete(blockIndex)
                 break
+            }
+            case 'selection-change': {
+                const {} = response
             }
             default: {
             }
         }
     }
 
-    private blockListener = (data: any) => {
+    private onEditorBlockEvent = (data: any) => {
         if (!(data?.event instanceof CustomEvent) || !data.event) {
             console.error('block changed but its not custom event')
             return
         }
         const { event } = data
         if (!this.validateEventDetail(event)) return
-        const type = event.type as Events
+        const type = event.type as EditorEvents
         const { target, ...otherData } = event.detail as PossibleEventDetails
         otherData.type = type
         const targetId = target.id
@@ -187,19 +203,19 @@ export default class GroupCollab<SocketMethodName extends string> {
 
     private initBlockChangeListener() {
         this.handleBlockChange = throttle(this.blockChangeThrottleDelay, async (target: BlockAPI, index: number) => {
+            if (!this.isListening) return
             const targetId = target.id
             const savedData = await target.save()
             if (!savedData) return
 
-            const socketData: Partial<MessageData> = {
+            const socketData: MessageData = {
                 type: 'block-changed',
                 block: savedData,
+                index,
             }
-            socketData.blockId = targetId
-            socketData.index = index
 
             if (!this.isListening) return
-            this.socket.send(this.socketMethodName, socketData as MessageData)
+            this.socket.send(this.socketMethodName, socketData)
             this.addBlockToIgnoreListUntilNextRender(targetId, 'block-changed')
         })
     }
@@ -219,17 +235,17 @@ export default class GroupCollab<SocketMethodName extends string> {
         )
     }
 
-    private addBlockToIgnoreListUntilNextRender(blockId: string, type: Events) {
+    private addBlockToIgnoreListUntilNextRender(blockId: string, type: EditorEvents) {
         this.addBlockToIgnorelist(blockId, type)
         setTimeout(() => {
             this.removeBlockFromIgnorelist(blockId, type)
         }, 0)
     }
-    private addBlockToIgnorelist(blockId: string, type: Events) {
-        if (!this.ignoreEvents[blockId]) this.ignoreEvents[blockId] = new Set<Events>()
+    private addBlockToIgnorelist(blockId: string, type: EditorEvents) {
+        if (!this.ignoreEvents[blockId]) this.ignoreEvents[blockId] = new Set<EditorEvents>()
         this.ignoreEvents[blockId].add(type)
     }
-    private removeBlockFromIgnorelist(blockId: string, type: Events) {
+    private removeBlockFromIgnorelist(blockId: string, type: EditorEvents) {
         this.ignoreEvents[blockId].delete(type)
         if (!this.ignoreEvents[blockId].size) delete this.ignoreEvents[blockId]
     }
