@@ -4,6 +4,10 @@ import { type MakeConditionalType } from './UtilityTypes';
 export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     editor: EditorJS;
     socket: INeededSocketFields<SocketMethodName>;
+    /**
+     * Name of the socket event.
+     * @default 'editorjs-update'
+     */
     socketMethodName: SocketMethodName;
     /**
      * Delay to throttle block changes. Value is in ms
@@ -46,6 +50,8 @@ export default class GroupCollab<SocketMethodName extends string> {
     listen(): void;
     private receiveChange;
     private blockListener;
+    private initBlockChangeListener;
+    private handleBlockChange?;
     private validateEventDetail;
     private addBlockToIgnorelist;
     private removeBlockFromIgnorelist;

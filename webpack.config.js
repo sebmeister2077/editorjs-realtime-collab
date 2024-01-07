@@ -6,7 +6,7 @@ module.exports = {
     output: {
         filename: 'bundle.js', // Output bundle file name
         path: path.join(__dirname, '/dist'),
-        library: 'GroupCollabPlugin',
+        library: 'RealtimeCollabPlugin',
         libraryTarget: 'umd',
         libraryExport: 'default',
     },

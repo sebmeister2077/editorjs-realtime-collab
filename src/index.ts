@@ -9,10 +9,15 @@ import EditorJS, {
 } from '@editorjs/editorjs'
 import { type SavedData } from '@editorjs/editorjs/types/data-formats/block-data'
 import { PickFromConditionalType, type MakeConditionalType } from './UtilityTypes'
+import { throttle } from 'throttle-debounce'
 
 export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     editor: EditorJS
     socket: INeededSocketFields<SocketMethodName>
+    /**
+     * Name of the socket event.
+     * @default 'editorjs-update'
+     */
     socketMethodName: SocketMethodName
     /**
      * Delay to throttle block changes. Value is in ms
@@ -60,12 +65,13 @@ export default class GroupCollab<SocketMethodName extends string> {
     private _isListening = false
     private ignoreEvents: Record<string, Set<Events>> = {}
     private blockChangeThrottleDelay: number
-    public constructor({ editor, socket, socketMethodName, blockChangeThrottleDelay = 300 }: GroupCollabConfigOptions<SocketMethodName>) {
+    public constructor({ editor, socket, socketMethodName, blockChangeThrottleDelay = 500 }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
         this.socket = socket
-        this.socketMethodName = socketMethodName
+        this.socketMethodName = socketMethodName ?? 'editorjs-update'
         this.blockChangeThrottleDelay = blockChangeThrottleDelay
 
+        this.initBlockChangeListener()
         this.listen()
     }
 
@@ -141,8 +147,14 @@ export default class GroupCollab<SocketMethodName extends string> {
         const targetId = target.id
 
         if (this.ignoreEvents[targetId]?.has(type)) return
-        //save after dom changes have been progapated to the necessary tools
+
+        //save after dom changes have been propagated to the necessary tools
         setTimeout(async () => {
+            if (type === 'block-changed') {
+                this.handleBlockChange?.(target)
+                return
+            }
+
             const savedData = await target.save()
             if (!savedData) return
 
@@ -152,7 +164,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             }
             if (socketData.type === 'block-added')
                 socketData.index = (otherData as PickFromConditionalType<PossibleEventDetails, 'block-added'>).index
-            if (socketData.type === 'block-changed' || socketData.type === 'block-removed') socketData.blockId = targetId
+            if (socketData.type === 'block-removed') socketData.blockId = targetId
             if (socketData.type === 'block-moved') {
                 const { fromIndex, toIndex } = otherData as PickFromConditionalType<PossibleEventDetails, 'block-moved'>
                 socketData.fromBlockId = targetId
@@ -160,16 +172,30 @@ export default class GroupCollab<SocketMethodName extends string> {
                 socketData.toBlockId = this.editor.blocks.getBlockByIndex(fromIndex)?.id
             }
             this.socket.send(this.socketMethodName, socketData as MessageData)
-
-            if (socketData.type === 'block-changed') {
-                this.addBlockToIgnorelist(targetId, 'block-changed')
-                // throttle
-                setTimeout(() => {
-                    this.removeBlockFromIgnorelist(targetId, 'block-changed')
-                }, this.blockChangeThrottleDelay)
-            }
         }, 0)
     }
+
+    private initBlockChangeListener() {
+        this.handleBlockChange = throttle(this.blockChangeThrottleDelay, async (target: BlockAPI) => {
+            const targetId = target.id
+            const savedData = await target.save()
+            if (!savedData) return
+
+            const socketData: Partial<MessageData> = {
+                type: 'block-changed',
+                block: savedData,
+            }
+            socketData.blockId = targetId
+
+            if (!this.isListening) return
+            this.socket.send(this.socketMethodName, socketData as MessageData)
+            this.addBlockToIgnorelist(targetId, 'block-changed')
+            setTimeout(() => {
+                this.removeBlockFromIgnorelist(targetId, 'block-changed')
+            }, 0)
+        })
+    }
+    private handleBlockChange?: throttle<(target: BlockAPI) => Promise<void>> = undefined
     private validateEventDetail(ev: CustomEvent): ev is CustomEvent<PossibleEventDetails> {
         return (
             typeof ev.detail === 'object' &&
