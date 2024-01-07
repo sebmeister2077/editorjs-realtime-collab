@@ -1,0 +1,13 @@
+.cdx-realtime-block--selected .ce-block__content {
+    background: var(--inlineSelectionColor, #e1f2ff);
+}
+.cdx-realtime-block--selected .ce-block__content [contenteditable] {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+.cdx-realtime-block--selected .ce-block__content img,
+.cdx-realtime-block--selected .ce-block__content .ce-stub {
+    opacity: 0.55;
+}
