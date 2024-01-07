@@ -107,10 +107,7 @@ export default class GroupCollab<SocketMethodName extends string> {
         const { block, type } = response
 
         const blockId = block.id
-        this.addBlockToIgnorelist(blockId, type)
-        setTimeout(() => {
-            this.removeBlockFromIgnorelist(blockId, type)
-        }, 0)
+        this.addBlockToIgnoreListUntilNextRender(blockId, type)
         switch (response.type) {
             case 'block-added': {
                 const { index } = response
@@ -121,6 +118,7 @@ export default class GroupCollab<SocketMethodName extends string> {
                 const { index } = response
                 this.editor.blocks.update(blockId, block.data).catch((e) => {
                     if (e.message === `Block with id "${blockId}" not found`) {
+                        this.addBlockToIgnoreListUntilNextRender(blockId, 'block-added')
                         this.editor.blocks.insert(block.tool, block.data, null, index, false, false, block.id)
                     }
                 })
@@ -202,10 +200,7 @@ export default class GroupCollab<SocketMethodName extends string> {
 
             if (!this.isListening) return
             this.socket.send(this.socketMethodName, socketData as MessageData)
-            this.addBlockToIgnorelist(targetId, 'block-changed')
-            setTimeout(() => {
-                this.removeBlockFromIgnorelist(targetId, 'block-changed')
-            }, 0)
+            this.addBlockToIgnoreListUntilNextRender(targetId, 'block-changed')
         })
     }
     private handleBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
@@ -224,6 +219,12 @@ export default class GroupCollab<SocketMethodName extends string> {
         )
     }
 
+    private addBlockToIgnoreListUntilNextRender(blockId: string, type: Events) {
+        this.addBlockToIgnorelist(blockId, type)
+        setTimeout(() => {
+            this.removeBlockFromIgnorelist(blockId, type)
+        }, 0)
+    }
     private addBlockToIgnorelist(blockId: string, type: Events) {
         if (!this.ignoreEvents[blockId]) this.ignoreEvents[blockId] = new Set<Events>()
         this.ignoreEvents[blockId].add(type)

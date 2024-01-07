@@ -56,6 +56,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private initBlockChangeListener;
     private handleBlockChange?;
     private validateEventDetail;
+    private addBlockToIgnoreListUntilNextRender;
     private addBlockToIgnorelist;
     private removeBlockFromIgnorelist;
 }
