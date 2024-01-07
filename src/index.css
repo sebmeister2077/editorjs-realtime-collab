@@ -1,5 +1,13 @@
 .cdx-realtime-block--selected .ce-block__content {
-    background: var(--inlineSelectionColor, #e1f2ff);
+    position: relative;
+}
+
+.cdx-realtime-block--selected:not(.ce-block--drop-target) .ce-block__content::before {
+    content: '';
+    position: absolute;
+    inset: 0px;
+    z-index: -1;
+    background-color: #e1f2ff99;
 }
 .cdx-realtime-block--selected .ce-block__content [contenteditable] {
     -webkit-user-select: none;
