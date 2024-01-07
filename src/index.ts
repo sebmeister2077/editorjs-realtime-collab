@@ -31,10 +31,17 @@ export type MessageData = { block: SavedData } & (
     | MakeConditionalType<
           {
               blockId: string
-              // in case blockId is not found
-              // index: number
           },
-          typeof BlockChangedMutationType | typeof BlockRemovedMutationType,
+          typeof BlockRemovedMutationType,
+          'type'
+      >
+    | MakeConditionalType<
+          {
+              blockId: string
+              // in case blockId is not found
+              index: number
+          },
+          typeof BlockChangedMutationType,
           'type'
       >
     | MakeConditionalType<{ fromBlockId: string; toBlockId: string }, typeof BlockMovedMutationType, 'type'>
@@ -54,7 +61,7 @@ type PossibleEventDetails = {
 type Events = keyof BlockMutationEventMap
 export type INeededSocketFields<SocketMethodName extends string> = {
     send(socketMethod: SocketMethodName, data: MessageData): void
-    on(socketMethod: SocketMethodName, data: (data: MessageData) => void): void
+    on(socketMethod: SocketMethodName, callback: (data: MessageData) => void): void
     off(socketMethod: SocketMethodName): void
 }
 export default class GroupCollab<SocketMethodName extends string> {
@@ -97,7 +104,6 @@ export default class GroupCollab<SocketMethodName extends string> {
     }
 
     private receiveChange = (response: MessageData) => {
-        // console.log(response)
         const { block, type } = response
 
         const blockId = block.id
@@ -112,7 +118,12 @@ export default class GroupCollab<SocketMethodName extends string> {
                 break
             }
             case 'block-changed': {
-                this.editor.blocks.update(blockId, block.data)
+                const { index } = response
+                this.editor.blocks.update(blockId, block.data).catch((e) => {
+                    if (e.message === `Block with id "${blockId}" not found`) {
+                        this.editor.blocks.insert(block.tool, block.data, null, index, false, false, block.id)
+                    }
+                })
                 break
             }
             case 'block-moved': {
@@ -151,7 +162,8 @@ export default class GroupCollab<SocketMethodName extends string> {
         //save after dom changes have been propagated to the necessary tools
         setTimeout(async () => {
             if (type === 'block-changed') {
-                this.handleBlockChange?.(target)
+                if (!('index' in otherData) || typeof otherData.index !== 'number') return
+                this.handleBlockChange?.(target, otherData.index ?? 0)
                 return
             }
 
@@ -176,7 +188,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     }
 
     private initBlockChangeListener() {
-        this.handleBlockChange = throttle(this.blockChangeThrottleDelay, async (target: BlockAPI) => {
+        this.handleBlockChange = throttle(this.blockChangeThrottleDelay, async (target: BlockAPI, index: number) => {
             const targetId = target.id
             const savedData = await target.save()
             if (!savedData) return
@@ -186,6 +198,7 @@ export default class GroupCollab<SocketMethodName extends string> {
                 block: savedData,
             }
             socketData.blockId = targetId
+            socketData.index = index
 
             if (!this.isListening) return
             this.socket.send(this.socketMethodName, socketData as MessageData)
@@ -195,7 +208,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             }, 0)
         })
     }
-    private handleBlockChange?: throttle<(target: BlockAPI) => Promise<void>> = undefined
+    private handleBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
     private validateEventDetail(ev: CustomEvent): ev is CustomEvent<PossibleEventDetails> {
         return (
             typeof ev.detail === 'object' &&

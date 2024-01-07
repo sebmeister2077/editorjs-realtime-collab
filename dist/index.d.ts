@@ -21,13 +21,16 @@ export type MessageData = {
     index: number;
 }, typeof BlockAddedMutationType, 'type'> | MakeConditionalType<{
     blockId: string;
-}, typeof BlockChangedMutationType | typeof BlockRemovedMutationType, 'type'> | MakeConditionalType<{
+}, typeof BlockRemovedMutationType, 'type'> | MakeConditionalType<{
+    blockId: string;
+    index: number;
+}, typeof BlockChangedMutationType, 'type'> | MakeConditionalType<{
     fromBlockId: string;
     toBlockId: string;
 }, typeof BlockMovedMutationType, 'type'>);
 export type INeededSocketFields<SocketMethodName extends string> = {
     send(socketMethod: SocketMethodName, data: MessageData): void;
-    on(socketMethod: SocketMethodName, data: (data: MessageData) => void): void;
+    on(socketMethod: SocketMethodName, callback: (data: MessageData) => void): void;
     off(socketMethod: SocketMethodName): void;
 };
 export default class GroupCollab<SocketMethodName extends string> {
