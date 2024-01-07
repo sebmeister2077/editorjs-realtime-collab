@@ -24,7 +24,7 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
      * Delay to throttle block changes. Value is in ms
      * @default 300
      */
-    blockChangeThrottleDelay: number
+    blockChangeThrottleDelay?: number
 }
 
 export type MessageData = {} & (
