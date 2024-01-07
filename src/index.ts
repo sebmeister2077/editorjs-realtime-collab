@@ -14,6 +14,10 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     editor: EditorJS
     socket: INeededSocketFields<SocketMethodName>
     socketMethodName: SocketMethodName
+    /**
+     * Delay to throttle block changes. Value is in ms
+     * @default 300
+     */
     blockChangeThrottleDelay: number
 }
 
@@ -69,12 +73,17 @@ export default class GroupCollab<SocketMethodName extends string> {
         return this._isListening
     }
 
+    /**
+     * Remove event listeners on socket and editor
+     */
     public unlisten() {
         this.socket.off(this.socketMethodName)
         this.editor.off(this.editorBlockEvent, this.blockListener)
         this._isListening = false
     }
-
+    /**
+     * Manually listen for editor and socket events. This is called by default
+     */
     public listen() {
         this.socket.on(this.socketMethodName, this.receiveChange)
         this.editor.on(this.editorBlockEvent, this.blockListener)
