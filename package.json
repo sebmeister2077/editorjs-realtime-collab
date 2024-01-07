@@ -1,8 +1,7 @@
 {
     "name": "editorjs-realtime-collab",
     "version": "0.0.1",
-    "description": "Conccurent realtime plugin for EditorJS",
-    "main": "./dist/bundle.js",
+    "description": "Concurrent real-time plugin for EditorJS",
     "scripts": {
         "build": "webpack --mode production",
         "build:dev": "webpack --mode development --watch --output-filename=dev-build.js"
@@ -21,5 +20,27 @@
         "ts-loader": "^9.5.1",
         "webpack": "^5.89.0",
         "webpack-cli": "^5.1.4"
-    }
+    },
+    "main": "./dist/bundle.js",
+    "types": "./dist/index.d.ts",
+    "files": [
+        "dist/bundle.js",
+        "dist/index.d.ts"
+    ],
+    "keywords": [
+        "codex editor",
+        "realtime",
+        "socket",
+        "plugin",
+        "editor.js",
+        "editorjs"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/sebmeister2077/editorjs-realtime-collab.git"
+    },
+    "bugs": {
+        "url": "https://github.com/sebmeister2077/editorjs-realtime-collab/issues"
+    },
+    "homepage": "https://github.com/sebmeister2077/editorjs-realtime-collab#readme"
 }
