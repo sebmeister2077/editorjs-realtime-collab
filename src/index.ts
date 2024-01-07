@@ -106,9 +106,8 @@ export default class GroupCollab<SocketMethodName extends string> {
         this.socket.off(this.socketMethodName)
         this.editor.off(this.editorBlockEvent, this.onEditorBlockEvent)
         this.observer.disconnect()
+        document.removeEventListener('selectionchange', this.onInlineSelectionChange)
 
-        // this.editor.off(this.editorDomChangedEvent, this.onBlockSelectionChange)
-        // document.removeEventListener('selectionchange', this.onInlineSelectionChange)
         this._isListening = false
     }
     /**
@@ -127,8 +126,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             attributeFilter: ['class'],
             subtree: true,
         })
-        // this.editor.on(this.editorDomChangedEvent, this.onBlockSelectionChange)
-        // document.addEventListener('selectionchange', this.onInlineSelectionChange)
+        document.addEventListener('selectionchange', this.onInlineSelectionChange)
 
         this._isListening = true
     }
@@ -171,6 +169,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             })
         }
 
+        // Focused class doesnt have any important styles fo i wont implement this now
         // if (this.localBlockStates[blockId]?.has('focused') != isFocused) {
         //     this.localBlockStates[blockId] ??= new Set()
 
@@ -204,12 +203,19 @@ export default class GroupCollab<SocketMethodName extends string> {
             case 'block-changed': {
                 const { index, block } = response
                 this.addBlockToIgnoreListUntilNextRender(block.id, response.type)
-                this.editor.blocks.update(block.id, block.data).catch((e) => {
-                    if (e.message === `Block with id "${block.id}" not found`) {
-                        this.addBlockToIgnoreListUntilNextRender(block.id, 'block-added')
-                        this.editor.blocks.insert(block.tool, block.data, null, index, false, false, block.id)
-                    }
-                })
+                const customClassList = this.getDOMBlockById(block.id)?.classList
+                this.editor.blocks
+                    .update(block.id, block.data)
+                    .catch((e) => {
+                        if (e.message === `Block with id "${block.id}" not found`) {
+                            this.addBlockToIgnoreListUntilNextRender(block.id, 'block-added')
+                            this.editor.blocks.insert(block.tool, block.data, null, index, false, false, block.id)
+                        }
+                    })
+                    .then(() => {
+                        // some blocks when being selected emit a block-changed event
+                        if (customClassList?.contains(this.CSS.selected)) this.getDOMBlockById(block.id)?.classList.add(this.CSS.selected)
+                    })
                 break
             }
             case 'block-moved': {
