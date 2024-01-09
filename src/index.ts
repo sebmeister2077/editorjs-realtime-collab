@@ -1,4 +1,3 @@
-import SignalR from '@microsoft/signalr'
 import EditorJS, {
     BlockAddedMutationType,
     BlockRemovedMutationType,
@@ -47,8 +46,12 @@ export type MessageData =
           typeof BlockChangedMutationType
       >
     | MakeConditionalType<{ fromBlockId: string; toBlockId: string }, typeof BlockMovedMutationType>
-    | MakeConditionalType<{ blockId: string; startIndex: number; endIndex: number }, typeof UserInlineSelectionChangeType>
+    | MakeConditionalType<
+          { elementXPath: string; elementNodeIndex: number; anchorOffset: number; focusOffset: number },
+          typeof UserInlineSelectionChangeType
+      >
     | MakeConditionalType<{ blockId: string; isSelected: boolean }, typeof UserBlockSelectionChangeType>
+
 type PossibleEventDetails = {
     target: BlockAPI
 } & (
@@ -59,7 +62,6 @@ type PossibleEventDetails = {
       >
     | MakeConditionalType<{ fromIndex: number; toIndex: number }, typeof BlockMovedMutationType, 'type'>
 )
-// const conn = new SignalR.HubConnectionBuilder().withUrl('https://localhost:7244/myHubPath').build()
 
 type EditorEvents = keyof BlockMutationEventMap
 type Events = EditorEvents | typeof UserInlineSelectionChangeType | typeof UserBlockSelectionChangeType
@@ -74,14 +76,15 @@ export default class GroupCollab<SocketMethodName extends string> {
     private editor: EditorJS
     private socket: INeededSocketFields<SocketMethodName>
     private socketMethodName: SocketMethodName
-    private editorBlockEvent = 'block changed' // this might need more investigation
+    private editorBlockEvent = 'block changed'
     private editorDomChangedEvent = 'redactor dom changed' // this might need more investigation
     private _isListening = false
     private ignoreEvents: Record<string, Set<Events>> = {}
     private blockChangeThrottleDelay: number
     private observer: MutationObserver
     private localBlockStates: Record<string, Set<'selected' | 'focused'>> = {}
-    public constructor({ editor, socket, socketMethodName, blockChangeThrottleDelay = 500 }: GroupCollabConfigOptions<SocketMethodName>) {
+    private blockIdAttributeName = 'data-id'
+    public constructor({ editor, socket, socketMethodName, blockChangeThrottleDelay = 300 }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
         this.socket = socket
         this.socketMethodName = socketMethodName ?? 'editorjs-update'
@@ -93,7 +96,6 @@ export default class GroupCollab<SocketMethodName extends string> {
         })
 
         this.initBlockChangeListener()
-        this.listen()
     }
 
     public get isListening() {
@@ -111,15 +113,15 @@ export default class GroupCollab<SocketMethodName extends string> {
         this._isListening = false
     }
     /**
-     * Manually listen for editor and socket events. This is called by default
+     * Start listening for events.
      */
     public listen() {
         this.socket.on(this.socketMethodName, this.onReceiveChange)
         this.editor.on(this.editorBlockEvent, this.onEditorBlockEvent)
         const redactor =
             (this.editor as any)?.ui.redactor ??
-            document.querySelector(`#${(this.editor as any)?.configuration.holder} .codex-editor__redactor`) ??
-            document.querySelector('.codex-editor__redactor')
+            document.querySelector(`#${(this.editor as any)?.configuration.holder} .${this.EditorCSS.editorRedactor}`) ??
+            document.querySelector(`.${this.EditorCSS.editorRedactor}`)
         this.observer.observe(redactor, {
             childList: true,
             attributes: true,
@@ -141,6 +143,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             baseBlock: 'ce-block',
             focused: 'ce-block--focused',
             selected: 'ce-block--selected',
+            editorRedactor: 'codex-editor__redactor',
         }
     }
 
@@ -151,7 +154,7 @@ export default class GroupCollab<SocketMethodName extends string> {
 
         const isSelected = target.classList.contains(this.EditorCSS.selected)
         const isFocused = target.classList.contains(this.EditorCSS.focused)
-        const blockId = target.getAttribute('data-id')
+        const blockId = target.getAttribute(this.blockIdAttributeName)
         if (!blockId) return
 
         // we need to save the current selected & focus state for each block or else we are sending too much data through socket
@@ -184,12 +187,28 @@ export default class GroupCollab<SocketMethodName extends string> {
         const selection = document.getSelection()
         if (!selection) return
 
-        // console.log(selection)
-        if (selection && this.isNodeInsideOfEditor(selection.anchorNode!)) {
-            // console.log('inside of editor')
-            return
-        }
-        // console.log('NOT inside of editor')
+        const { anchorNode, anchorOffset, focusOffset } = selection
+        if (!anchorNode) return
+
+        if (!this.isNodeInsideOfEditor(anchorNode)) return
+        console.log(selection)
+
+        const { parentElement } = anchorNode
+        if (!parentElement) return
+
+        const elementNodeIndex = this.getNodeRelativeChildIndex(anchorNode)
+        if (elementNodeIndex === null) return
+        const path = this.getElementXPath(parentElement)
+
+        console.log(path)
+        console.log(document.querySelector(path))
+        this.socket.send(this.socketMethodName, {
+            type: UserInlineSelectionChangeType,
+            elementXPath: path,
+            anchorOffset,
+            focusOffset,
+            elementNodeIndex,
+        })
     }
 
     private onReceiveChange = (response: MessageData) => {
@@ -242,11 +261,20 @@ export default class GroupCollab<SocketMethodName extends string> {
                 if (!block) return
                 if (isSelected) block.classList.add(this.CSS.selected)
                 else block.classList.remove(this.CSS.selected)
+                break
             }
 
             case 'inline-selection-change': {
-                const {} = response
+                //@ts-ignore
+                window.qs = document.querySelector
+                const { anchorOffset, elementNodeIndex, elementXPath, focusOffset } = response
+                console.log('🚀 ~ file: index.ts:263 ~ GroupCollab<SocketMethodName ~ response:', response)
+
+                //* Note if element is not found try without nth-child
+                console.log(document.querySelector(response.elementXPath))
+                break
             }
+
             default: {
             }
         }
@@ -345,7 +373,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     }
 
     private getDOMBlockById(blockId: string) {
-        const block = document.querySelector(`[data-id=${blockId}]`)
+        const block = document.querySelector(`[${this.blockIdAttributeName}=${blockId}]`)
         if (block instanceof HTMLElement) return block
         return null
     }
@@ -358,12 +386,45 @@ export default class GroupCollab<SocketMethodName extends string> {
 
         let currentElement = node.parentElement
         while (currentElement && currentElement !== document.body) {
-            const blockId = currentElement.getAttribute('data-id')
+            const blockId = currentElement.getAttribute(this.blockIdAttributeName)
             const isEditorBlockElement = currentElement.classList.contains(this.EditorCSS.baseBlock)
             const isCurrentEditorElement = blockId && Boolean(this.editor.blocks.getById(blockId))
             if (isEditorBlockElement && isCurrentEditorElement) return true
             currentElement = currentElement.parentElement
         }
         return false
+    }
+
+    private getElementXPath(selectedNode: HTMLElement) {
+        let element = selectedNode
+        // If the element does not have an ID, construct the XPath based on its ancestors
+        const paths = []
+        while (element.parentNode instanceof HTMLElement && !element.classList.contains(this.EditorCSS.editorRedactor)) {
+            const dataId = element.getAttribute(this.blockIdAttributeName)
+            let elementSelector = element.localName.toLowerCase()
+            if (dataId) elementSelector += `[${this.blockIdAttributeName}='${dataId}']`
+            if (element.previousElementSibling) {
+                let sibling: Element | null = element
+                let count = 1
+                while ((sibling = sibling.previousElementSibling)) {
+                    count++
+                }
+                elementSelector += `:nth-child(${count})`
+            }
+            paths.unshift(elementSelector)
+            element = element.parentNode
+        }
+        paths.unshift(`.${this.EditorCSS.editorRedactor}`)
+        return paths.join(' > ')
+    }
+
+    private getNodeRelativeChildIndex(node: Node): number | null {
+        const { parentElement } = node
+        if (!parentElement) return null
+        for (let i = 0; i < parentElement.childNodes.length; i++) {
+            if (node === parentElement.childNodes[i]) return i
+        }
+
+        return null
     }
 }

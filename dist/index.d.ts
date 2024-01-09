@@ -29,9 +29,10 @@ export type MessageData = MakeConditionalType<{
     fromBlockId: string;
     toBlockId: string;
 }, typeof BlockMovedMutationType> | MakeConditionalType<{
-    blockId: string;
-    startIndex: number;
-    endIndex: number;
+    elementXPath: string;
+    elementNodeIndex: number;
+    anchorOffset: number;
+    focusOffset: number;
 }, typeof UserInlineSelectionChangeType> | MakeConditionalType<{
     blockId: string;
     isSelected: boolean;
@@ -52,6 +53,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private blockChangeThrottleDelay;
     private observer;
     private localBlockStates;
+    private blockIdAttributeName;
     constructor({ editor, socket, socketMethodName, blockChangeThrottleDelay }: GroupCollabConfigOptions<SocketMethodName>);
     get isListening(): boolean;
     /**
@@ -59,7 +61,7 @@ export default class GroupCollab<SocketMethodName extends string> {
      */
     unlisten(): void;
     /**
-     * Manually listen for editor and socket events. This is called by default
+     * Start listening for events.
      */
     listen(): void;
     private get CSS();
@@ -76,5 +78,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private removeBlockFromIgnorelist;
     private getDOMBlockById;
     private isNodeInsideOfEditor;
+    private getElementXPath;
+    private getNodeRelativeChildIndex;
 }
 export {};
