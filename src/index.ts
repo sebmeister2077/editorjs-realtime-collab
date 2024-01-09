@@ -9,6 +9,7 @@ import EditorJS, {
 import { type SavedData } from '@editorjs/editorjs/types/data-formats/block-data'
 import { PickFromConditionalType, type MakeConditionalType } from './UtilityTypes'
 import { throttle } from 'throttle-debounce'
+import './index.css'
 
 const UserInlineSelectionChangeType = 'inline-selection-change'
 const UserBlockSelectionChangeType = 'block-selection-change'
@@ -45,9 +46,17 @@ export type MessageData =
           },
           typeof BlockChangedMutationType
       >
-    | MakeConditionalType<{ fromBlockId: string; toBlockId: string }, typeof BlockMovedMutationType>
     | MakeConditionalType<
-          { elementXPath: string; elementNodeIndex: number; anchorOffset: number; focusOffset: number },
+          {
+              fromBlockId: string
+              //used to guarantee sync between editors
+              toBlockIndex: number
+              toBlockId: string
+          },
+          typeof BlockMovedMutationType
+      >
+    | MakeConditionalType<
+          { elementXPath: string | null; elementNodeIndex: number; anchorOffset: number; focusOffset: number } & Omit<DOMRect, 'toJSON'>,
           typeof UserInlineSelectionChangeType
       >
     | MakeConditionalType<{ blockId: string; isSelected: boolean }, typeof UserBlockSelectionChangeType>
@@ -71,7 +80,7 @@ export type INeededSocketFields<SocketMethodName extends string> = {
     on(socketMethod: SocketMethodName, callback: (data: MessageData) => void): void
     off(socketMethod: SocketMethodName): void
 }
-require('./index.css').toString()
+
 export default class GroupCollab<SocketMethodName extends string> {
     private editor: EditorJS
     private socket: INeededSocketFields<SocketMethodName>
@@ -82,8 +91,10 @@ export default class GroupCollab<SocketMethodName extends string> {
     private ignoreEvents: Record<string, Set<Events>> = {}
     private blockChangeThrottleDelay: number
     private observer: MutationObserver
+    private handleBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
     private localBlockStates: Record<string, Set<'selected' | 'focused'>> = {}
     private blockIdAttributeName = 'data-id'
+    private inlineFakeCursorAttributeName = 'data-realtime-fake-inline-cursor'
     public constructor({ editor, socket, socketMethodName, blockChangeThrottleDelay = 300 }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
         this.socket = socket
@@ -136,6 +147,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private get CSS() {
         return {
             selected: 'cdx-realtime-block--selected',
+            inlineCursor: 'cdx-realtime-inline-cursor',
         }
     }
     private get EditorCSS() {
@@ -189,9 +201,12 @@ export default class GroupCollab<SocketMethodName extends string> {
 
         const { anchorNode, anchorOffset, focusOffset } = selection
         if (!anchorNode) return
+        const range = selection.getRangeAt(0)
+        const rect = range.getBoundingClientRect()
+        // console.log('🚀 ~ file: index.ts:206 ~ GroupCollab<SocketMethodName ~ rect:', rect)
+        // console.log('🚀 ~ file: index.ts:205 ~ GroupCollab<SocketMethodName ~ range:', range)
 
         if (!this.isNodeInsideOfEditor(anchorNode)) return
-        console.log(selection)
 
         const { parentElement } = anchorNode
         if (!parentElement) return
@@ -200,15 +215,16 @@ export default class GroupCollab<SocketMethodName extends string> {
         if (elementNodeIndex === null) return
         const path = this.getElementXPath(parentElement)
 
-        console.log(path)
-        console.log(document.querySelector(path))
-        this.socket.send(this.socketMethodName, {
+        const data = {
             type: UserInlineSelectionChangeType,
             elementXPath: path,
             anchorOffset,
             focusOffset,
             elementNodeIndex,
-        })
+            ...(rect.toJSON() as DOMRect),
+        } as const
+        this.socket.send(this.socketMethodName, data)
+        this.onReceiveChange(data)
     }
 
     private onReceiveChange = (response: MessageData) => {
@@ -238,9 +254,12 @@ export default class GroupCollab<SocketMethodName extends string> {
                 break
             }
             case 'block-moved': {
-                const { toBlockId, fromBlockId } = response
+                const { toBlockId, fromBlockId, toBlockIndex } = response
                 const toIndex = this.editor.blocks.getBlockIndex(toBlockId)
                 const fromIndex = this.editor.blocks.getBlockIndex(fromBlockId)
+
+                const blocksAreNowInSync = toBlockIndex === fromIndex
+                if (blocksAreNowInSync) return
 
                 this.addBlockToIgnoreListUntilNextRender(fromBlockId, response.type)
                 this.editor.blocks.move(toIndex, fromIndex)
@@ -265,13 +284,64 @@ export default class GroupCollab<SocketMethodName extends string> {
             }
 
             case 'inline-selection-change': {
-                //@ts-ignore
-                window.qs = document.querySelector
-                const { anchorOffset, elementNodeIndex, elementXPath, focusOffset } = response
-                console.log('🚀 ~ file: index.ts:263 ~ GroupCollab<SocketMethodName ~ response:', response)
+                const { type, anchorOffset, elementNodeIndex, elementXPath, focusOffset, ...rect } = response
+                console.log('🚀 ~ file: index.ts:288 ~ GroupCollab<SocketMethodName ~ rect:', rect)
+                const isReset = elementXPath === null
+                const { cursor, isInDocument } = this.getFakeCursor()
+                if (isReset) {
+                    if (isInDocument) cursor.remove()
+                    return
+                }
 
-                //* Note if element is not found try without nth-child
-                console.log(document.querySelector(response.elementXPath))
+                // //* Note if element is not found try without nth-child
+                const selectedElement = document.querySelector(elementXPath)
+                if (!(selectedElement instanceof HTMLElement)) return
+
+                const { fontSize } = window.getComputedStyle(selectedElement)
+
+                cursor.style.height = fontSize
+                cursor.style.top = `${rect.top}px`
+                //TODO this needs to be relative to block__content
+                cursor.style.left = `${rect.left}px`
+
+                if (!isInDocument) document.body.append(cursor)
+                // const nodeToBeSplit = selectedElement.childNodes.item(elementNodeIndex)
+                // if (nodeToBeSplit.nodeType !== Node.TEXT_NODE) return
+                // const content = nodeToBeSplit.textContent
+                // if (!content) return
+
+                // this.addBlockToIgnoreListUntilNextRender('inline-selection', 'inline-selection-change')
+                // const left = content.slice(0, anchorOffset),
+                //     right = content.slice(anchorOffset)
+
+                // const test = document.createElement('div')
+                // test.textContent = left
+                // const br = document.createElement('br')
+                // br.style.display = 'none'
+                // nodeToBeSplit.textContent = right
+                // selectedElement.insertBefore(br, nodeToBeSplit)
+                // selectedElement.insertBefore(test.childNodes.item(0), br)
+                // // const x = null as any as Node
+                // // x.getRootNode()
+                // const elementRect = br.getBoundingClientRect()
+                // const bodyRect = document.body.getBoundingClientRect()
+
+                // const xRelativeToViewport = elementRect.left
+                // const yRelativeToViewport = elementRect.top
+
+                // const xRelativeToBody = xRelativeToViewport - bodyRect.left + window.scrollX
+                // const yRelativeToBody = yRelativeToViewport - bodyRect.top + window.scrollY
+
+                // const { paddingTop, paddingLeft } = window.getComputedStyle(selectedElement)
+
+                // console.log('🚀 ~ file: index.ts:309 ~ GroupCollab<SocketMethodName ~ paddingTop:', paddingTop)
+                // console.log('🚀 ~ file: index.ts:309 ~ GroupCollab<SocketMethodName ~ yRelativeToBody:', yRelativeToBody)
+
+                // br.remove()
+                // //remove this element as its not needed anymore
+
+                // if (!isInDocument) document.body.append(cursor)
+
                 break
             }
 
@@ -315,6 +385,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             if (socketData.type === 'block-moved') {
                 const { fromIndex, toIndex } = otherData as PickFromConditionalType<PossibleEventDetails, 'block-moved'>
                 socketData.fromBlockId = targetId
+                socketData.toBlockIndex = toIndex
                 //at this point the blocks already switched places
                 socketData.toBlockId = this.editor.blocks.getBlockByIndex(fromIndex)?.id
             }
@@ -340,7 +411,16 @@ export default class GroupCollab<SocketMethodName extends string> {
             this.addBlockToIgnoreListUntilNextRender(targetId, 'block-changed')
         })
     }
-    private handleBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
+
+    private getFakeCursor(): { cursor: HTMLElement; isInDocument: boolean } {
+        const domCursor = document.querySelector(`[${this.inlineFakeCursorAttributeName}]`)
+        if (domCursor instanceof HTMLElement) return { cursor: domCursor, isInDocument: true }
+        const cursor = document.createElement('div')
+        cursor.setAttribute(this.inlineFakeCursorAttributeName, '')
+        cursor.classList.add(this.CSS.inlineCursor)
+        return { cursor, isInDocument: false }
+    }
+
     private validateEventDetail(ev: CustomEvent): ev is CustomEvent<PossibleEventDetails> {
         return (
             typeof ev.detail === 'object' &&

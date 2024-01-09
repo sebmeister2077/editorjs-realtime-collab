@@ -1,6 +1,7 @@
 import EditorJS, { BlockAddedMutationType, BlockRemovedMutationType, BlockMovedMutationType, BlockChangedMutationType } from '@editorjs/editorjs';
 import { type SavedData } from '@editorjs/editorjs/types/data-formats/block-data';
 import { type MakeConditionalType } from './UtilityTypes';
+import './index.css';
 declare const UserInlineSelectionChangeType = "inline-selection-change";
 declare const UserBlockSelectionChangeType = "block-selection-change";
 export type GroupCollabConfigOptions<SocketMethodName extends string> = {
@@ -27,13 +28,14 @@ export type MessageData = MakeConditionalType<{
     index: number;
 }, typeof BlockChangedMutationType> | MakeConditionalType<{
     fromBlockId: string;
+    toBlockIndex: number;
     toBlockId: string;
 }, typeof BlockMovedMutationType> | MakeConditionalType<{
-    elementXPath: string;
+    elementXPath: string | null;
     elementNodeIndex: number;
     anchorOffset: number;
     focusOffset: number;
-}, typeof UserInlineSelectionChangeType> | MakeConditionalType<{
+} & Omit<DOMRect, 'toJSON'>, typeof UserInlineSelectionChangeType> | MakeConditionalType<{
     blockId: string;
     isSelected: boolean;
 }, typeof UserBlockSelectionChangeType>;
@@ -52,8 +54,10 @@ export default class GroupCollab<SocketMethodName extends string> {
     private ignoreEvents;
     private blockChangeThrottleDelay;
     private observer;
+    private handleBlockChange?;
     private localBlockStates;
     private blockIdAttributeName;
+    private inlineFakeCursorAttributeName;
     constructor({ editor, socket, socketMethodName, blockChangeThrottleDelay }: GroupCollabConfigOptions<SocketMethodName>);
     get isListening(): boolean;
     /**
@@ -71,7 +75,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private onReceiveChange;
     private onEditorBlockEvent;
     private initBlockChangeListener;
-    private handleBlockChange?;
+    private getFakeCursor;
     private validateEventDetail;
     private addBlockToIgnoreListUntilNextRender;
     private addBlockToIgnorelist;
