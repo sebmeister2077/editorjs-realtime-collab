@@ -230,6 +230,7 @@ export default class GroupCollab<SocketMethodName extends string> {
         if (!contentAndBlockId) return
         const { blockId, contentElement } = contentAndBlockId
         const parentRect = contentElement.getBoundingClientRect()
+        console.log('🚀 ~ file: index.ts:233 ~ GroupCollab<SocketMethodName ~ contentElement:', contentElement)
 
         const finalRect: Pick<DOMRect, 'top' | 'left'> = {
             top: childRect.top - parentRect.top,
@@ -319,8 +320,9 @@ export default class GroupCollab<SocketMethodName extends string> {
                 const { type, anchorOffset, elementNodeIndex, elementXPath, focusOffset, blockId, ...rect } = response
                 const blockContent = this.getDOMBlockById(blockId)?.querySelector(`.${this.EditorCSS.blockContent}`)
                 if (!blockContent) return
+
                 const isReset = elementXPath === null
-                const { cursor, isInDocument } = this.getFakeCursor()
+                const { cursor, isInDocument } = this.getFakeCursor(blockId)
                 if (isReset) {
                     if (isInDocument) cursor.remove()
                     return
@@ -410,9 +412,14 @@ export default class GroupCollab<SocketMethodName extends string> {
         })
     }
 
-    private getFakeCursor(): { cursor: HTMLElement; isInDocument: boolean } {
-        const domCursor = document.querySelector(`[${this.inlineFakeCursorAttributeName}]`)
+    private getFakeCursor(blockId: string): { cursor: HTMLElement; isInDocument: boolean } {
+        const domCursor = document.querySelector(
+            `[${this.blockIdAttributeName}='${blockId}'] .${this.EditorCSS.blockContent} [${this.inlineFakeCursorAttributeName}]`,
+        )
         if (domCursor instanceof HTMLElement) return { cursor: domCursor, isInDocument: true }
+
+        // remove if exists
+        document.querySelector(`[${this.inlineFakeCursorAttributeName}]`)?.remove()
         const cursor = document.createElement('div')
         cursor.setAttribute(this.inlineFakeCursorAttributeName, '')
         cursor.classList.add(this.CSS.inlineCursor)
