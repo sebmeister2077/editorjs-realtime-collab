@@ -230,17 +230,10 @@ export default class GroupCollab<SocketMethodName extends string> {
         if (!contentAndBlockId) return
         const { blockId, contentElement } = contentAndBlockId
         const parentRect = contentElement.getBoundingClientRect()
-        console.log('🚀 ~ file: index.ts:233 ~ GroupCollab<SocketMethodName ~ contentElement:', contentElement)
 
         const finalRect: Pick<DOMRect, 'top' | 'left'> = {
             top: childRect.top - parentRect.top,
-            // right: childRect.right - parentRect.left,
-            // bottom: childRect.bottom - parentRect.top,
             left: childRect.left - parentRect.left,
-            // x: childRect.x - parentRect.x,
-            // y: childRect.y - parentRect.y,
-            // width: childRect.width,
-            // height: childRect.height,
         }
 
         const elementNodeIndex = this.getNodeRelativeChildIndex(anchorNode)
@@ -257,7 +250,6 @@ export default class GroupCollab<SocketMethodName extends string> {
             ...finalRect,
         } as const
         this.socket.send(this.socketMethodName, data)
-        this.onReceiveChange(data)
     }
 
     private onReceiveChange = (response: MessageData) => {
