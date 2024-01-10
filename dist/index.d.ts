@@ -21,7 +21,8 @@ type LocalConfig = {
      */
     blockChangeThrottleDelay: number;
     overrideStyles?: {
-        cursorColor: string;
+        cursorColor?: string;
+        cursorClass?: string;
     };
 };
 export type MessageData = MakeConditionalType<{

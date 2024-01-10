@@ -31,7 +31,7 @@ type LocalConfig = {
      * @default 300
      */
     blockChangeThrottleDelay: number
-    overrideStyles?: { cursorColor: string }
+    overrideStyles?: { cursorColor?: string; cursorClass?: string }
 }
 
 export type MessageData =
@@ -335,8 +335,9 @@ export default class GroupCollab<SocketMethodName extends string> {
                 cursor.style.height = fontSize
                 cursor.style.top = `${rect.top}px`
                 cursor.style.left = `${rect.left}px`
-                const { cursorColor } = this.config.overrideStyles ?? {}
+                const { cursorColor, cursorClass } = this.config.overrideStyles ?? {}
                 if (cursorColor) cursor.style.setProperty('--realtime-inline-cursor-color', cursorColor)
+                if (cursorClass) cursor.classList.add(...cursorClass.split(' '))
 
                 if (!isInDocument) blockContent.append(cursor)
                 break
