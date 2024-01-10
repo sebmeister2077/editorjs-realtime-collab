@@ -35,6 +35,7 @@ export type MessageData = MakeConditionalType<{
     elementNodeIndex: number;
     anchorOffset: number;
     focusOffset: number;
+    blockId: string;
 } & Omit<DOMRect, 'toJSON'>, typeof UserInlineSelectionChangeType> | MakeConditionalType<{
     blockId: string;
     isSelected: boolean;
@@ -81,6 +82,8 @@ export default class GroupCollab<SocketMethodName extends string> {
     private addBlockToIgnorelist;
     private removeBlockFromIgnorelist;
     private getDOMBlockById;
+    private getRedactor;
+    private getContentAndBlockIdFromNode;
     private isNodeInsideOfEditor;
     private getElementXPath;
     private getNodeRelativeChildIndex;

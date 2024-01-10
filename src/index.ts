@@ -56,7 +56,10 @@ export type MessageData =
           typeof BlockMovedMutationType
       >
     | MakeConditionalType<
-          { elementXPath: string | null; elementNodeIndex: number; anchorOffset: number; focusOffset: number } & Omit<DOMRect, 'toJSON'>,
+          { elementXPath: string | null; elementNodeIndex: number; anchorOffset: number; focusOffset: number; blockId: string } & Omit<
+              DOMRect,
+              'toJSON'
+          >,
           typeof UserInlineSelectionChangeType
       >
     | MakeConditionalType<{ blockId: string; isSelected: boolean }, typeof UserBlockSelectionChangeType>
@@ -156,6 +159,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             focused: 'ce-block--focused',
             selected: 'ce-block--selected',
             editorRedactor: 'codex-editor__redactor',
+            blockContent: 'ce-block__content',
         }
     }
 
@@ -201,15 +205,30 @@ export default class GroupCollab<SocketMethodName extends string> {
 
         const { anchorNode, anchorOffset, focusOffset } = selection
         if (!anchorNode) return
-        const range = selection.getRangeAt(0)
-        const rect = range.getBoundingClientRect()
-        // console.log('🚀 ~ file: index.ts:206 ~ GroupCollab<SocketMethodName ~ rect:', rect)
-        // console.log('🚀 ~ file: index.ts:205 ~ GroupCollab<SocketMethodName ~ range:', range)
 
         if (!this.isNodeInsideOfEditor(anchorNode)) return
 
         const { parentElement } = anchorNode
         if (!parentElement) return
+
+        const range = selection.getRangeAt(0)
+        const childRect = range.getBoundingClientRect()
+
+        const contentAndBlockId = this.getContentAndBlockIdFromNode(anchorNode)
+        if (!contentAndBlockId) return
+        const { blockId, contentElement } = contentAndBlockId
+        const parentRect = contentElement.getBoundingClientRect()
+
+        const finalRect: Omit<DOMRect, 'toJSON'> = {
+            top: childRect.top - parentRect.top,
+            right: childRect.right - parentRect.left,
+            bottom: childRect.bottom - parentRect.top,
+            left: childRect.left - parentRect.left,
+            x: childRect.x - parentRect.x,
+            y: childRect.y - parentRect.y,
+            width: childRect.width,
+            height: childRect.height,
+        }
 
         const elementNodeIndex = this.getNodeRelativeChildIndex(anchorNode)
         if (elementNodeIndex === null) return
@@ -217,11 +236,12 @@ export default class GroupCollab<SocketMethodName extends string> {
 
         const data = {
             type: UserInlineSelectionChangeType,
+            blockId,
             elementXPath: path,
             anchorOffset,
             focusOffset,
             elementNodeIndex,
-            ...(rect.toJSON() as DOMRect),
+            ...finalRect,
         } as const
         this.socket.send(this.socketMethodName, data)
         this.onReceiveChange(data)
@@ -284,8 +304,9 @@ export default class GroupCollab<SocketMethodName extends string> {
             }
 
             case 'inline-selection-change': {
-                const { type, anchorOffset, elementNodeIndex, elementXPath, focusOffset, ...rect } = response
-                console.log('🚀 ~ file: index.ts:288 ~ GroupCollab<SocketMethodName ~ rect:', rect)
+                const { type, anchorOffset, elementNodeIndex, elementXPath, focusOffset, blockId, ...rect } = response
+                const blockContent = this.getDOMBlockById(blockId)?.querySelector(`.${this.EditorCSS.blockContent}`)
+                if (!blockContent) return
                 const isReset = elementXPath === null
                 const { cursor, isInDocument } = this.getFakeCursor()
                 if (isReset) {
@@ -301,47 +322,9 @@ export default class GroupCollab<SocketMethodName extends string> {
 
                 cursor.style.height = fontSize
                 cursor.style.top = `${rect.top}px`
-                //TODO this needs to be relative to block__content
                 cursor.style.left = `${rect.left}px`
 
-                if (!isInDocument) document.body.append(cursor)
-                // const nodeToBeSplit = selectedElement.childNodes.item(elementNodeIndex)
-                // if (nodeToBeSplit.nodeType !== Node.TEXT_NODE) return
-                // const content = nodeToBeSplit.textContent
-                // if (!content) return
-
-                // this.addBlockToIgnoreListUntilNextRender('inline-selection', 'inline-selection-change')
-                // const left = content.slice(0, anchorOffset),
-                //     right = content.slice(anchorOffset)
-
-                // const test = document.createElement('div')
-                // test.textContent = left
-                // const br = document.createElement('br')
-                // br.style.display = 'none'
-                // nodeToBeSplit.textContent = right
-                // selectedElement.insertBefore(br, nodeToBeSplit)
-                // selectedElement.insertBefore(test.childNodes.item(0), br)
-                // // const x = null as any as Node
-                // // x.getRootNode()
-                // const elementRect = br.getBoundingClientRect()
-                // const bodyRect = document.body.getBoundingClientRect()
-
-                // const xRelativeToViewport = elementRect.left
-                // const yRelativeToViewport = elementRect.top
-
-                // const xRelativeToBody = xRelativeToViewport - bodyRect.left + window.scrollX
-                // const yRelativeToBody = yRelativeToViewport - bodyRect.top + window.scrollY
-
-                // const { paddingTop, paddingLeft } = window.getComputedStyle(selectedElement)
-
-                // console.log('🚀 ~ file: index.ts:309 ~ GroupCollab<SocketMethodName ~ paddingTop:', paddingTop)
-                // console.log('🚀 ~ file: index.ts:309 ~ GroupCollab<SocketMethodName ~ yRelativeToBody:', yRelativeToBody)
-
-                // br.remove()
-                // //remove this element as its not needed anymore
-
-                // if (!isInDocument) document.body.append(cursor)
-
+                if (!isInDocument) blockContent.append(cursor)
                 break
             }
 
@@ -458,6 +441,32 @@ export default class GroupCollab<SocketMethodName extends string> {
         return null
     }
 
+    private getRedactor(): HTMLElement | null {
+        const redactor = document.querySelector(`.${this.EditorCSS.editorRedactor}`)
+        if (!(redactor instanceof HTMLElement)) return null
+        return redactor
+    }
+
+    private getContentAndBlockIdFromNode(node: Node): { contentElement: HTMLElement; blockId: string } | null {
+        if (!this.isNodeInsideOfEditor(node)) return null
+        let el: HTMLElement | null = node.parentElement
+
+        const isContentElement = (el: HTMLElement | null) =>
+            el?.classList.contains(this.EditorCSS.blockContent) &&
+            el?.parentElement?.classList.contains(this.EditorCSS.baseBlock) &&
+            el?.parentElement.hasAttribute(this.blockIdAttributeName)
+        while (el && !isContentElement(el)) {
+            el = el.parentElement
+        }
+        if (!el) return null
+
+        const blockId = el.parentElement?.getAttribute(this.blockIdAttributeName)
+        if (!blockId) return null
+        return {
+            contentElement: el,
+            blockId,
+        }
+    }
     private isNodeInsideOfEditor(node: Node) {
         const redactor = (this.editor as any)?.ui?.nodes?.redactor
         if (redactor instanceof HTMLElement) return redactor.contains(node)

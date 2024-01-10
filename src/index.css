@@ -1,3 +1,7 @@
+.codex-editor__redactor {
+    position: relative;
+}
+
 .cdx-realtime-block--selected .ce-block__content {
     position: relative;
 }
