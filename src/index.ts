@@ -22,11 +22,16 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
      * @default 'editorjs-update'
      */
     socketMethodName: SocketMethodName
+    config?: Partial<LocalConfig>
+}
+
+type LocalConfig = {
     /**
      * Delay to throttle block changes. Value is in ms
      * @default 300
      */
-    blockChangeThrottleDelay?: number
+    blockChangeThrottleDelay: number
+    overrideStyles?: { cursorColor: string }
 }
 
 export type MessageData =
@@ -56,9 +61,9 @@ export type MessageData =
           typeof BlockMovedMutationType
       >
     | MakeConditionalType<
-          { elementXPath: string | null; elementNodeIndex: number; anchorOffset: number; focusOffset: number; blockId: string } & Omit<
+          { elementXPath: string | null; elementNodeIndex: number; anchorOffset: number; focusOffset: number; blockId: string } & Pick<
               DOMRect,
-              'toJSON'
+              'top' | 'left'
           >,
           typeof UserInlineSelectionChangeType
       >
@@ -92,17 +97,24 @@ export default class GroupCollab<SocketMethodName extends string> {
     private editorDomChangedEvent = 'redactor dom changed' // this might need more investigation
     private _isListening = false
     private ignoreEvents: Record<string, Set<Events>> = {}
-    private blockChangeThrottleDelay: number
     private observer: MutationObserver
     private handleBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
     private localBlockStates: Record<string, Set<'selected' | 'focused'>> = {}
     private blockIdAttributeName = 'data-id'
     private inlineFakeCursorAttributeName = 'data-realtime-fake-inline-cursor'
-    public constructor({ editor, socket, socketMethodName, blockChangeThrottleDelay = 300 }: GroupCollabConfigOptions<SocketMethodName>) {
+    private config: LocalConfig
+    public constructor({ editor, socket, socketMethodName, config }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
         this.socket = socket
         this.socketMethodName = socketMethodName ?? 'editorjs-update'
-        this.blockChangeThrottleDelay = blockChangeThrottleDelay
+
+        const defaultConfig: LocalConfig = {
+            blockChangeThrottleDelay: 300,
+        }
+        this.config = {
+            ...defaultConfig,
+            ...(config ?? {}),
+        }
         this.observer = new MutationObserver((mutations, observer) => {
             for (let mutation of mutations) {
                 this.handleMutation(mutation)
@@ -219,15 +231,15 @@ export default class GroupCollab<SocketMethodName extends string> {
         const { blockId, contentElement } = contentAndBlockId
         const parentRect = contentElement.getBoundingClientRect()
 
-        const finalRect: Omit<DOMRect, 'toJSON'> = {
+        const finalRect: Pick<DOMRect, 'top' | 'left'> = {
             top: childRect.top - parentRect.top,
-            right: childRect.right - parentRect.left,
-            bottom: childRect.bottom - parentRect.top,
+            // right: childRect.right - parentRect.left,
+            // bottom: childRect.bottom - parentRect.top,
             left: childRect.left - parentRect.left,
-            x: childRect.x - parentRect.x,
-            y: childRect.y - parentRect.y,
-            width: childRect.width,
-            height: childRect.height,
+            // x: childRect.x - parentRect.x,
+            // y: childRect.y - parentRect.y,
+            // width: childRect.width,
+            // height: childRect.height,
         }
 
         const elementNodeIndex = this.getNodeRelativeChildIndex(anchorNode)
@@ -323,6 +335,8 @@ export default class GroupCollab<SocketMethodName extends string> {
                 cursor.style.height = fontSize
                 cursor.style.top = `${rect.top}px`
                 cursor.style.left = `${rect.left}px`
+                const { cursorColor } = this.config.overrideStyles ?? {}
+                if (cursorColor) cursor.style.setProperty('--realtime-inline-cursor-color', cursorColor)
 
                 if (!isInDocument) blockContent.append(cursor)
                 break
@@ -377,7 +391,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     }
 
     private initBlockChangeListener() {
-        this.handleBlockChange = throttle(this.blockChangeThrottleDelay, async (target: BlockAPI, index: number) => {
+        this.handleBlockChange = throttle(this.config.blockChangeThrottleDelay, async (target: BlockAPI, index: number) => {
             if (!this.isListening) return
             const targetId = target.id
             const savedData = await target.save()

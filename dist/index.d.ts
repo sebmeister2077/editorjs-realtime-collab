@@ -12,11 +12,17 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
      * @default 'editorjs-update'
      */
     socketMethodName: SocketMethodName;
+    config?: Partial<LocalConfig>;
+};
+type LocalConfig = {
     /**
      * Delay to throttle block changes. Value is in ms
      * @default 300
      */
-    blockChangeThrottleDelay?: number;
+    blockChangeThrottleDelay: number;
+    overrideStyles?: {
+        cursorColor: string;
+    };
 };
 export type MessageData = MakeConditionalType<{
     index: number;
@@ -36,7 +42,7 @@ export type MessageData = MakeConditionalType<{
     anchorOffset: number;
     focusOffset: number;
     blockId: string;
-} & Omit<DOMRect, 'toJSON'>, typeof UserInlineSelectionChangeType> | MakeConditionalType<{
+} & Pick<DOMRect, 'top' | 'left'>, typeof UserInlineSelectionChangeType> | MakeConditionalType<{
     blockId: string;
     isSelected: boolean;
 }, typeof UserBlockSelectionChangeType>;
@@ -53,13 +59,13 @@ export default class GroupCollab<SocketMethodName extends string> {
     private editorDomChangedEvent;
     private _isListening;
     private ignoreEvents;
-    private blockChangeThrottleDelay;
     private observer;
     private handleBlockChange?;
     private localBlockStates;
     private blockIdAttributeName;
     private inlineFakeCursorAttributeName;
-    constructor({ editor, socket, socketMethodName, blockChangeThrottleDelay }: GroupCollabConfigOptions<SocketMethodName>);
+    private config;
+    constructor({ editor, socket, socketMethodName, config }: GroupCollabConfigOptions<SocketMethodName>);
     get isListening(): boolean;
     /**
      * Remove event listeners on socket and editor
