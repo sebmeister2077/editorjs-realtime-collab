@@ -7,7 +7,7 @@ import EditorJS, {
     BlockAPI,
 } from '@editorjs/editorjs'
 import { type SavedData } from '@editorjs/editorjs/types/data-formats/block-data'
-import { PickFromConditionalType, type MakeConditionalType } from './UtilityTypes'
+import { type PickFromConditionalType, type MakeConditionalType } from './UtilityTypes'
 import { throttle } from 'throttle-debounce'
 import './index.css'
 
@@ -96,6 +96,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private editorBlockEvent = 'block changed'
     private editorDomChangedEvent = 'redactor dom changed' // this might need more investigation
     private _isListening = false
+    // events to ignore until next render
     private ignoreEvents: Record<string, Set<Events>> = {}
     private observer: MutationObserver
     private handleBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined

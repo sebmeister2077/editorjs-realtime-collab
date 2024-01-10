@@ -33,3 +33,5 @@ export type PickFromConditionalType<
     : FieldName extends keyof T
     ? T & Record<FieldName, Type>
     : never
+
+export {}

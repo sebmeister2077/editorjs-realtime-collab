@@ -29,7 +29,8 @@
     "types": "./dist/index.d.ts",
     "files": [
         "dist/bundle.js",
-        "dist/index.d.ts"
+        "dist/index.d.ts",
+        "dist/UtilityTypes.d.ts"
     ],
     "keywords": [
         "codex editor",
