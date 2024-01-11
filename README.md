@@ -2,6 +2,9 @@
 
 Realtime plugin for [Editor.js](https://editorjs.io).
 
+You can check out this
+[Demo](https://sebmeister2077.github.io/editorjs-realtime-collab/)
+
 ## Instalation
 
 ```shell
@@ -24,6 +27,27 @@ const realtimeCollab = new RealtimeCollabPlugin({
     // name of the socket event, defaults to 'editorjs-update'
     socketMethodName: 'yourNameOfChoice',
 })
+```
+
+## If your socket does not have the exact interface names & types you can always custom bind your socket
+
+```js
+// Pie Socket example
+const send = (name, data) => {
+    channel.publish(name, data)
+}
+const on = (name, cb) => {
+    channel.listen(name, (data, meta) => {
+        cb(data)
+    })
+}
+const socket = {
+    on,
+    send,
+    off: () => {
+        /*... */
+    },
+}
 ```
 
 ## Config Params (optional)
