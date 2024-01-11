@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <script src="https://unpkg.com/piesocket-js@5"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@editorjs/editorjs@2.28.2/dist/editorjs.umd.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@editorjs/header@2.8.1/dist/header.umd.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@editorjs/table@2.3.0/dist/table.umd.js"></script>
+        <script src="./dist/build.js"></script>
+        <title>EditorJS realtime collab DEMO</title>
+    </head>
+    <body>
+        <div id="holder"></div>
+        <script>
+            const dataLocation = 'editorJs-default-data-realtime'
+            const defaultBlocks = [
+                {
+                    id: 'firstid',
+                    type: 'paragraph',
+                    data: {
+                        text: 'This is some default text',
+                    },
+                },
+                {
+                    id: 'secondid',
+                    type: 'paragraph',
+                    data: {
+                        text: 'This is some other text',
+                    },
+                },
+            ]
+            const sessionData = sessionStorage.getItem(dataLocation)
+            const editor = new EditorJS({
+                data: sessionData
+                    ? JSON.parse(sessionData)
+                    : {
+                          time: Date.now(),
+                          blocks: defaultBlocks,
+                          version: '2.28.2',
+                      },
+                holder: 'holder',
+                tools: {
+                    header: Header,
+                    table: Table,
+                },
+                onChange(api) {
+                    api.saver.save().then((data) => {
+                        if (data) {
+                            sessionStorage.setItem(dataLocation, JSON.stringify(data))
+                        }
+                    })
+                },
+            })
+
+            const pieSocket = new PieSocket.default({
+                clusterId: 'demo',
+                apiKey: 'VCXCEuvhGcBDP7XhiJJUDvR1e1D3eiVjgZ9VRiaV',
+                notifySelf: true,
+            })
+            editor.isReady.then(() => {
+                pieSocket.subscribe('test-lol').then((channel) => {
+                    channel.listen('hi', () => {})
+                    console.log(channel)
+
+                    const groupCollab = new RealtimeCollabPlugin({
+                        editor,
+                        socket: {
+                            send: (name, data) => channel.publish(name, data),
+                            on: (name, cb) => channel.listen(name, cb),
+                            off: () => {},
+                        },
+                        socketMethodName: 'EmitChange',
+                    })
+
+                    groupCollab.listen()
+                })
+            })
+        </script>
+    </body>
+</html>
