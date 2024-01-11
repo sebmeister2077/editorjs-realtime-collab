@@ -8,7 +8,29 @@
         <script src="https://cdn.jsdelivr.net/npm/@editorjs/header@2.8.1/dist/header.umd.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/@editorjs/table@2.3.0/dist/table.umd.js"></script>
         <script src="./dist/bundle.js"></script>
+        <script
+            src="https://code.jquery.com/jquery-3.7.0.min.js"
+            integrity="sha256-2Pmvv0kuTBOenSvLm6bvfBSSHrUJ+3A7x6P5Ebd07/g="
+            crossorigin="anonymous"
+        ></script>
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/toastr@2.1.4/build/toastr.min.css"
+            integrity="sha256-R91pD48xW+oHbpJYGn5xR0Q7tMhH4xOrWn1QqMRINtA="
+            crossorigin="anonymous"
+        />
+        <script src="https://cdn.jsdelivr.net/npm/toastr@2.1.4/toastr.min.js"></script>
         <title>EditorJS realtime collab DEMO</title>
+        <style>
+            body {
+                background-color: #1f2937;
+            }
+
+            #holder {
+                background-color: #f9fafb;
+                border-radius: 12px;
+            }
+        </style>
     </head>
     <body>
         <div id="holder"></div>
@@ -31,51 +53,107 @@
                 },
             ]
             const sessionData = sessionStorage.getItem(dataLocation)
-            const editor = new EditorJS({
-                data: sessionData
-                    ? JSON.parse(sessionData)
-                    : {
-                          time: Date.now(),
-                          blocks: defaultBlocks,
-                          version: '2.28.2',
-                      },
-                holder: 'holder',
-                tools: {
-                    header: Header,
-                    table: Table,
-                },
-                onChange(api) {
-                    api.saver.save().then((data) => {
-                        if (data) {
-                            sessionStorage.setItem(dataLocation, JSON.stringify(data))
-                        }
+            ;(async () => {
+                const pieSocket = new PieSocket.default({
+                    clusterId: 'free.blr2',
+                    apiKey: 'ucF3OH2Stp93Mnqid7F0wfo9iwdLOiDI4f7DiL49',
+                    notifySelf: true,
+                })
+                const channel = await pieSocket.subscribe('test-lol')
+                console.log('socket subscribed')
+
+                console.log(channel.members)
+                let timeout = null
+
+                const askTimeout = 3000
+                toastr.options = {
+                    progressBar: true,
+                    preventDuplicates: true,
+                    timeout: askTimeout - 300,
+                }
+                toastr.info('Receiving data from online users...')
+
+                const askEvent = 'ask-for-all-data'
+                const receiveEvent = 'receive-all-data'
+
+                let isEditorInstantiated = false
+                channel.listen(receiveEvent, (data) => {
+                    if (timeout) clearTimeout(timeout)
+                    initEditorWithOrWithoutData(data)
+                })
+
+                channel.publish(askEvent)
+                timeout = setTimeout(initEditorWithOrWithoutData, askTimeout)
+                async function initEditorWithOrWithoutData(otherUserData) {
+                    if (isEditorInstantiated) return
+                    isEditorInstantiated = true
+                    toastr.clear()
+                    toastr.options = {
+                        preventDuplicates: true,
+                    }
+                    if (!otherUserData) {
+                        toastr.warning('No more online users')
+                        toastr.success('Using default data')
+                    } else {
+                        toastr.success('Received data')
+                    }
+                    const editor = new EditorJS({
+                        data:
+                            otherUserData ??
+                            (sessionData
+                                ? JSON.parse(sessionData)
+                                : {
+                                      time: Date.now(),
+                                      blocks: defaultBlocks,
+                                      version: '2.28.2',
+                                  }),
+                        holder: 'holder',
+                        tools: {
+                            header: Header,
+                            table: Table,
+                        },
+                        onChange(api) {
+                            api.saver.save().then((data) => {
+                                if (data) {
+                                    sessionStorage.setItem(dataLocation, JSON.stringify(data))
+                                }
+                            })
+                        },
                     })
-                },
-            })
 
-            const pieSocket = new PieSocket.default({
-                clusterId: 'demo',
-                apiKey: 'VCXCEuvhGcBDP7XhiJJUDvR1e1D3eiVjgZ9VRiaV',
-                notifySelf: true,
-            })
-            editor.isReady.then(() => {
-                pieSocket.subscribe('test-lol').then((channel) => {
-                    channel.listen('hi', () => {})
-                    console.log(channel)
+                    await editor.isReady
+                    //sync editor with other online users
+                    channel.listen(askEvent, () => {
+                        toastr.info('saving and sharing data to newly connected user')
+                        editor.save().then((data) => {
+                            channel.publish(receiveEvent, data)
+                        })
+                    })
+                    const senderId = crypto.randomUUID()
+                    const send = (name, data) => {
+                        console.log('🚀 ~ file: local-testing.html:76 ~ send ~ data:', data)
 
+                        channel.publish(name, { ...data, senderId })
+                    }
+                    const on = (name, cb) => {
+                        channel.listen(name, (data, meta) => {
+                            if (data.senderId === senderId) return
+                            console.log('Data and meta:', data, meta)
+                            cb(data)
+                        })
+                    }
                     const groupCollab = new RealtimeCollabPlugin({
                         editor,
                         socket: {
-                            send: (name, data) => channel.publish(name, data),
-                            on: (name, cb) => channel.listen(name, cb),
+                            send,
+                            on,
                             off: () => {},
                         },
-                        socketMethodName: 'EmitChange',
                     })
 
                     groupCollab.listen()
-                })
-            })
+                }
+            })()
         </script>
     </body>
 </html>
