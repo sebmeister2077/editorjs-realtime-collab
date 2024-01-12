@@ -21,7 +21,7 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
      * Name of the socket event.
      * @default 'editorjs-update'
      */
-    socketMethodName: SocketMethodName
+    socketMethodName?: SocketMethodName
     config?: Partial<LocalConfig>
 }
 
@@ -107,7 +107,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     public constructor({ editor, socket, socketMethodName, config }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
         this.socket = socket
-        this.socketMethodName = socketMethodName ?? 'editorjs-update'
+        this.socketMethodName = socketMethodName ?? ('editorjs-update' as SocketMethodName)
 
         const defaultConfig: LocalConfig = {
             blockChangeThrottleDelay: 300,

@@ -11,7 +11,7 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
      * Name of the socket event.
      * @default 'editorjs-update'
      */
-    socketMethodName: SocketMethodName;
+    socketMethodName?: SocketMethodName;
     config?: Partial<LocalConfig>;
 };
 type LocalConfig = {

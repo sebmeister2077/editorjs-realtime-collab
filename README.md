@@ -31,12 +31,31 @@ const realtimeCollab = new RealtimeCollabPlugin({
 
 ## If your socket does not have the exact interface names & types you can always custom bind your socket
 
-```js
-// Pie Socket example
-const send = (name, data) => {
+```ts
+// Socket.io example
+
+const socket = io('wss://example.com/chat')
+
+new GroupCollab({
+    editor,
+    socket,
+})
+
+// Microsoft signalR
+const connection = new signalR.HubConnectionBuilder().withUrl('/chat').build()
+
+connection.start().then(() => {
+    new GroupCollab({
+        editor,
+        socket: connection,
+    })
+})
+
+// Pie Socket example (interface doesn't match your socket)
+const send = (name: string, data: Object) => {
     channel.publish(name, data)
 }
-const on = (name, cb) => {
+const on = (name: string, cb: Function) => {
     channel.listen(name, (data, meta) => {
         cb(data)
     })
@@ -45,12 +64,17 @@ const socket = {
     on,
     send,
     off: () => {
-        /*... */
+        /* unsubscribing logic */
     },
 }
+
+new RealtimeCollabPlugin({
+    editor,
+    socket,
+})
 ```
 
-## Config Params (optional)
+## Config Params
 
 | Field                    | Type             | Description                                              | Default           |
 | ------------------------ | ---------------- | -------------------------------------------------------- | ----------------- |
