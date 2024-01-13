@@ -381,6 +381,9 @@ export default class GroupCollab<SocketMethodName extends string> {
                 socketData.toBlockId = this.editor.blocks.getBlockByIndex(fromIndex)?.id
             }
             this.socket.send(this.socketMethodName, socketData as MessageData)
+            setTimeout(() => {
+                this.onInlineSelectionChange(new CustomEvent('selectionchange'))
+            }, 20)
         }, 0)
     }
 
