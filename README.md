@@ -88,6 +88,11 @@ socket.addEventListener('open', async (e) => {
 })
 
 // Pie Socket example
+const pieSocket = new PieSocket.default({
+    clusterId: 'free.blr2',
+    apiKey: 'api key',
+})
+const channel = await pieSocket.subscribe('channel-name')
 const send = (name: string, data: Object) => {
     channel.publish(name, data)
 }
