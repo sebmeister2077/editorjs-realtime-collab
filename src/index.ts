@@ -360,6 +360,9 @@ export default class GroupCollab<SocketMethodName extends string> {
             if (type === 'block-changed') {
                 if (!('index' in otherData) || typeof otherData.index !== 'number') return
                 this.handleBlockChange?.(target, otherData.index ?? 0)
+                setTimeout(() => {
+                    this.onInlineSelectionChange(new CustomEvent('selectionchange'))
+                }, (window as any).cursorDelay ?? 20)
                 return
             }
 
@@ -381,9 +384,6 @@ export default class GroupCollab<SocketMethodName extends string> {
                 socketData.toBlockId = this.editor.blocks.getBlockByIndex(fromIndex)?.id
             }
             this.socket.send(this.socketMethodName, socketData as MessageData)
-            setTimeout(() => {
-                this.onInlineSelectionChange(new CustomEvent('selectionchange'))
-            }, 20)
         }, 0)
     }
 
