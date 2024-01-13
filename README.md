@@ -117,9 +117,11 @@ new RealtimeCollabPlugin({
 
 ## Config Params
 
-| Field                    | Type       | Description                                              | Default           |
-| ------------------------ | ---------- | -------------------------------------------------------- | ----------------- |
-| editor                   | `EditorJS` | The editorJs instance you want to listen to              | `required*`       |
-| socket                   | `Object`   | The socket instance (or custom method bingings)          | `required*`       |
-| socketMethodName         | `string`   | The event name to use when communicating between sockets | `editorjs-update` |
-| blockChangeThrottleDelay | `number`   | Delay to throttle block changes (ms).                    | `300`             |
+| Field                    | Type                                            | Description                                              | Default              |
+| ------------------------ | ----------------------------------------------- | -------------------------------------------------------- | -------------------- |
+| editor                   | `EditorJS`                                      | The editorJs instance you want to listen to              | `required*`          |
+| socket                   | `Object`                                        | The socket instance (or custom method bingings)          | `required*`          |
+| socketMethodName         | `string`                                        | The event name to use when communicating between sockets | `editorjs-update`    |
+| blockChangeThrottleDelay | `number`                                        | Delay to throttle block changes (ms).                    | `300`                |
+| cursor                   | `{ color: string }`                             | Cursor configuration                                     | `{ color: #0d0c0f }` |
+| overrideStyles           | `{ cursorClass: string; selectedClass:string }` | Class overrides                                          | `{}`                 |

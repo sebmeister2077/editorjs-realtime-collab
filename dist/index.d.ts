@@ -12,17 +12,19 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
      * @default 'editorjs-update'
      */
     socketMethodName?: SocketMethodName;
-    config?: Partial<LocalConfig>;
-};
+} & Partial<LocalConfig>;
 type LocalConfig = {
     /**
      * Delay to throttle block changes. Value is in ms
      * @default 300
      */
     blockChangeThrottleDelay: number;
+    cursor?: {
+        color?: string;
+    };
     overrideStyles?: {
-        cursorColor?: string;
         cursorClass?: string;
+        selectedClass?: string;
     };
 };
 export type MessageData = MakeConditionalType<{
@@ -66,7 +68,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private blockIdAttributeName;
     private inlineFakeCursorAttributeName;
     private config;
-    constructor({ editor, socket, socketMethodName, config }: GroupCollabConfigOptions<SocketMethodName>);
+    constructor({ editor, socket, socketMethodName, ...config }: GroupCollabConfigOptions<SocketMethodName>);
     get isListening(): boolean;
     /**
      * Remove event listeners on socket and editor

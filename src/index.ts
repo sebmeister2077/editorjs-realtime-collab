@@ -22,8 +22,7 @@ export type GroupCollabConfigOptions<SocketMethodName extends string> = {
      * @default 'editorjs-update'
      */
     socketMethodName?: SocketMethodName
-    config?: Partial<LocalConfig>
-}
+} & Partial<LocalConfig>
 
 type LocalConfig = {
     /**
@@ -31,7 +30,8 @@ type LocalConfig = {
      * @default 300
      */
     blockChangeThrottleDelay: number
-    overrideStyles?: { cursorColor?: string; cursorClass?: string }
+    cursor?: { color?: string }
+    overrideStyles?: { cursorClass?: string; selectedClass?: string }
 }
 
 export type MessageData =
@@ -102,7 +102,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private blockIdAttributeName = 'data-id'
     private inlineFakeCursorAttributeName = 'data-realtime-fake-inline-cursor'
     private config: LocalConfig
-    public constructor({ editor, socket, socketMethodName, config }: GroupCollabConfigOptions<SocketMethodName>) {
+    public constructor({ editor, socket, socketMethodName, ...config }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
         this.socket = socket
         this.socketMethodName = socketMethodName ?? ('editorjs-update' as SocketMethodName)
@@ -273,7 +273,11 @@ export default class GroupCollab<SocketMethodName extends string> {
                     })
                     .then(() => {
                         // some blocks when being selected emit a block-changed event
-                        if (customClassList?.contains(this.CSS.selected)) this.getDOMBlockById(block.id)?.classList.add(this.CSS.selected)
+                        if (customClassList?.contains(this.CSS.selected))
+                            this.getDOMBlockById(block.id)?.classList.add(
+                                this.CSS.selected,
+                                this.config.overrideStyles?.selectedClass ?? '',
+                            )
                     })
                 break
             }
@@ -302,8 +306,8 @@ export default class GroupCollab<SocketMethodName extends string> {
                 this.addBlockToIgnoreListUntilNextRender(blockId, response.type)
                 const block = this.getDOMBlockById(blockId)
                 if (!block) return
-                if (isSelected) block.classList.add(this.CSS.selected)
-                else block.classList.remove(this.CSS.selected)
+                if (isSelected) block.classList.add(this.CSS.selected, this.config.overrideStyles?.selectedClass ?? '')
+                else block.classList.remove(this.CSS.selected, this.config.overrideStyles?.selectedClass ?? '')
                 break
             }
 
@@ -328,8 +332,9 @@ export default class GroupCollab<SocketMethodName extends string> {
                 cursor.style.height = fontSize
                 cursor.style.top = `${rect.top}px`
                 cursor.style.left = `${rect.left}px`
-                const { cursorColor, cursorClass } = this.config.overrideStyles ?? {}
-                if (cursorColor) cursor.style.setProperty('--realtime-inline-cursor-color', cursorColor)
+                const { cursorClass } = this.config.overrideStyles ?? {}
+                const { color } = this.config.cursor ?? {}
+                if (color) cursor.style.setProperty('--realtime-inline-cursor-color', color)
                 if (cursorClass) cursor.classList.add(...cursorClass.split(' '))
 
                 if (!isInDocument) blockContent.append(cursor)
@@ -362,7 +367,7 @@ export default class GroupCollab<SocketMethodName extends string> {
                 this.handleBlockChange?.(target, otherData.index ?? 0)
                 setTimeout(() => {
                     this.onInlineSelectionChange(new CustomEvent('selectionchange'))
-                }, (window as any).cursorDelay ?? 20)
+                }, 0)
                 return
             }
 

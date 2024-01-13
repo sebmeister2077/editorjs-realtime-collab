@@ -140,6 +140,7 @@
                             cb(data)
                         })
                     }
+                    const colors = ['red', 'green', 'blue']
                     const groupCollab = new RealtimeCollabPlugin({
                         editor,
                         socket: {
@@ -147,6 +148,7 @@
                             on,
                             off: () => {},
                         },
+                        cursor: { color: colors[Math.floor(Math.random() * colors.length)] },
                     })
 
                     groupCollab.listen()
