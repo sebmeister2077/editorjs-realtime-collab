@@ -30,7 +30,7 @@ export type MessageData = MakeConditionalType<{
     block: SavedData;
 }, typeof BlockAddedMutationType> | MakeConditionalType<{
     blockId: string;
-}, typeof BlockRemovedMutationType, 'type'> | MakeConditionalType<{
+}, typeof BlockRemovedMutationType> | MakeConditionalType<{
     block: SavedData;
     index: number;
 }, typeof BlockChangedMutationType> | MakeConditionalType<{

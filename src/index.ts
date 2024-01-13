@@ -40,8 +40,7 @@ export type MessageData =
           {
               blockId: string
           },
-          typeof BlockRemovedMutationType,
-          'type'
+          typeof BlockRemovedMutationType
       >
     | MakeConditionalType<
           {
@@ -74,10 +73,9 @@ type PossibleEventDetails = {
 } & (
     | MakeConditionalType<
           { index: number },
-          typeof BlockAddedMutationType | typeof BlockChangedMutationType | typeof BlockRemovedMutationType,
-          'type'
+          typeof BlockAddedMutationType | typeof BlockChangedMutationType | typeof BlockRemovedMutationType
       >
-    | MakeConditionalType<{ fromIndex: number; toIndex: number }, typeof BlockMovedMutationType, 'type'>
+    | MakeConditionalType<{ fromIndex: number; toIndex: number }, typeof BlockMovedMutationType>
 )
 
 type EditorEvents = keyof BlockMutationEventMap
@@ -451,7 +449,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     }
 
     private getDOMBlockById(blockId: string) {
-        const block = document.querySelector(`[${this.blockIdAttributeName}=${blockId}]`)
+        const block = document.querySelector(`[${this.blockIdAttributeName}='${blockId}']`)
         if (block instanceof HTMLElement) return block
         return null
     }
