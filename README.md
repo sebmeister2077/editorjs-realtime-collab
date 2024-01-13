@@ -29,7 +29,7 @@ const realtimeCollab = new RealtimeCollabPlugin({
 })
 ```
 
-## If your socket does not have the exact interface names & types you can always custom bind your socket
+## Examples
 
 ```ts
 // Socket.io example
@@ -50,8 +50,44 @@ connection.start().then(() => {
         socket: connection,
     })
 })
+```
 
-// Pie Socket example (interface doesn't match your socket)
+If your socket does not have the exact interface names & types you can always custom bind your socket
+
+```ts
+// Native Browser WebSocket
+const socket = new WebSocket('socket url')
+
+socket.addEventListener('open', async (e) => {
+    const on = (eventName, callback) => {
+        socket.addEventListener('message', (e) => {
+            const isSameClient = e.currentTarget === socket
+            if (isSameClient) return
+
+            const splits = e.data.split(',')
+            const receivedEventName = splits[0]
+            if (eventName !== receivedEventName) return
+            const data = JSON.parse(splits[1])
+            callback(data)
+        })
+    }
+    const send = (eventName, data) => {
+        socket.send([eventName, JSON.stringify(data)])
+    }
+    const off = (eventName) => {
+        /* handle unsubscribing logic */
+    }
+    const groupCollab = new RealtimeCollabPlugin({
+        editor,
+        socket: {
+            send,
+            on,
+            off,
+        },
+    })
+})
+
+// Pie Socket example
 const send = (name: string, data: Object) => {
     channel.publish(name, data)
 }
@@ -76,9 +112,9 @@ new RealtimeCollabPlugin({
 
 ## Config Params
 
-| Field                    | Type             | Description                                              | Default           |
-| ------------------------ | ---------------- | -------------------------------------------------------- | ----------------- |
-| editor                   | `EditorJS`       | The editorJs instance you want to listen to              | `-`               |
-| socket                   | `SocketInstance` | The socket instance (or custom implementation)           | `-`               |
-| socketMethodName         | `string`         | The event name to use when communicating between sockets | `editorjs-update` |
-| blockChangeThrottleDelay | `number`         | Delay to throttle block changes (ms).                    | `300`             |
+| Field                    | Type       | Description                                              | Default           |
+| ------------------------ | ---------- | -------------------------------------------------------- | ----------------- |
+| editor                   | `EditorJS` | The editorJs instance you want to listen to              | `required*`       |
+| socket                   | `Object`   | The socket instance (or custom method bingings)          | `required*`       |
+| socketMethodName         | `string`   | The event name to use when communicating between sockets | `editorjs-update` |
+| blockChangeThrottleDelay | `number`   | Delay to throttle block changes (ms).                    | `300`             |
