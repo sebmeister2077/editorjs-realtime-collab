@@ -29,6 +29,23 @@ const realtimeCollab = new RealtimeCollabPlugin({
 })
 ```
 
+And now the plugin automatically starts listening for any events
+
+## Manually listen and unlisten to the editor events
+
+```js
+// remove all listeners (socket, editor, document)
+realtimeCollab.unlisten()
+
+// manually re-add all listeners
+realtimeCollab.listen()
+
+//check for internal listening state if needed
+if (realtimeCollab.isListening) {
+    /*...*/
+}
+```
+
 ## Examples
 
 ```ts

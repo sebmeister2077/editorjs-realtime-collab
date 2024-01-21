@@ -1,8 +1,8 @@
 import EditorJS, {
-    BlockAddedMutationType,
-    BlockRemovedMutationType,
-    BlockMovedMutationType,
-    BlockChangedMutationType,
+    type BlockAddedMutationType,
+    type BlockRemovedMutationType,
+    type BlockMovedMutationType,
+    type BlockChangedMutationType,
     type BlockMutationEventMap,
     BlockAPI,
 } from '@editorjs/editorjs'

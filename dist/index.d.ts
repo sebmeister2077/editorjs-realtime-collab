@@ -1,4 +1,4 @@
-import EditorJS, { BlockAddedMutationType, BlockRemovedMutationType, BlockMovedMutationType, BlockChangedMutationType } from '@editorjs/editorjs';
+import EditorJS, { type BlockAddedMutationType, type BlockRemovedMutationType, type BlockMovedMutationType, type BlockChangedMutationType } from '@editorjs/editorjs';
 import { type SavedData } from '@editorjs/editorjs/types/data-formats/block-data';
 import { type MakeConditionalType } from './UtilityTypes';
 import './index.css';
