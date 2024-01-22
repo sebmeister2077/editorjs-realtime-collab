@@ -164,6 +164,7 @@ export default class GroupCollab<SocketMethodName extends string> {
         return {
             selected: 'cdx-realtime-block--selected',
             inlineCursor: 'cdx-realtime-inline-cursor',
+            inlineSelection: 'cdx-realtime-inline-selection',
         }
     }
     private get EditorCSS() {
@@ -333,13 +334,21 @@ export default class GroupCollab<SocketMethodName extends string> {
                 console.log(response)
 
                 if (isSelection) {
+                    const MARGIN_OF_ERROR = 6 //px
                     /**
                      * Ok so for this to work properly i have to check that the
                      * current selection Rect width equals the distance between left and right (IN DOM content ofc)
                      * If it doesn't then that means that the next rect should be concatenated to the current rect
                      * (because text overflowed on the other device but not this one)
                      */
-                    const selections = this.getFakeSelections(blockId)
+                    // this.getFakeSelections(blockId).forEach((sel) => sel.remove())
+                    // let currentSelection = this.createSelectionElement()
+                    // for (const rect of rects) {
+                    //     if (Math.abs(currentSelection.clientWidth) < MARGIN_OF_ERROR) {
+                    //         //create new selection, on the next line
+                    //     }
+
+                    // }
                 } else {
                     if (!cursor) cursor = this.createFakeCursor()
                     const rect = rects[0]
@@ -568,5 +577,11 @@ export default class GroupCollab<SocketMethodName extends string> {
         return null
     }
 
-    private createSelectionElement() {}
+    private createSelectionElement() {
+        const selection = document.createElement('div')
+        selection.setAttribute(this.inlineFakeSelectionAttributeName, '')
+        selection.classList.add(this.CSS.inlineSelection)
+
+        return selection
+    }
 }
