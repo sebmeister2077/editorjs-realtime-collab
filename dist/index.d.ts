@@ -42,6 +42,9 @@ export type MessageData = MakeConditionalType<{
 }, typeof BlockMovedMutationType> | MakeConditionalType<{
     elementXPath: string | null;
     blockId: string;
+    elementNodeIndex: number;
+    anchorOffset: number;
+    focusOffset: number;
     rects: Pick<DOMRect, 'top' | 'left' | 'width'>[];
 }, typeof UserInlineSelectionChangeType> | MakeConditionalType<{
     blockId: string;

@@ -63,6 +63,9 @@ export type MessageData =
           {
               elementXPath: string | null
               blockId: string
+              elementNodeIndex: number
+              anchorOffset: number
+              focusOffset: number
               rects: Pick<DOMRect, 'top' | 'left' | 'width'>[]
           },
           typeof UserInlineSelectionChangeType
@@ -249,12 +252,15 @@ export default class GroupCollab<SocketMethodName extends string> {
         if (elementNodeIndex === null) return
         const path = this.getElementXPath(parentElement)
 
-        const data = {
+        const data: PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType> = {
             type: UserInlineSelectionChangeType,
             blockId,
             elementXPath: path,
+            anchorOffset,
+            focusOffset,
+            elementNodeIndex,
             rects: finalRects,
-        } as PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType>
+        }
         this.socket.send(this.socketMethodName, data)
     }
 
