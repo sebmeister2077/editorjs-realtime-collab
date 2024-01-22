@@ -324,9 +324,10 @@ export default class GroupCollab<SocketMethodName extends string> {
 
                 const isSelection = rects.some((r) => r.width > 1)
                 const isReset = elementXPath === null || isSelection
-                const { cursor, isInDocument } = this.getFakeCursor(blockId)
+                let cursor = this.getFakeCursor(blockId)
+                const cursorExists = Boolean(cursor)
                 if (isReset) {
-                    if (isInDocument) cursor.remove()
+                    cursor?.remove()
                     return
                 }
                 console.log(response)
@@ -340,6 +341,7 @@ export default class GroupCollab<SocketMethodName extends string> {
                      */
                     const selections = this.getFakeSelections(blockId)
                 } else {
+                    if (!cursor) cursor = this.createFakeCursor()
                     const rect = rects[0]
                     //* Note if element is not found try without nth-child
                     const selectedElement = document.querySelector(elementXPath)
@@ -356,7 +358,7 @@ export default class GroupCollab<SocketMethodName extends string> {
                     if (color) cursor.style.setProperty('--realtime-inline-cursor-color', color)
                     if (cursorClass) cursor.classList.add(...cursorClass.split(' '))
 
-                    if (!isInDocument) blockContent.append(cursor)
+                    if (!cursorExists) blockContent.append(cursor)
                 }
                 break
             }
@@ -431,18 +433,19 @@ export default class GroupCollab<SocketMethodName extends string> {
         })
     }
 
-    private getFakeCursor(blockId: string): { cursor: HTMLElement; isInDocument: boolean } {
+    private getFakeCursor(blockId: string): HTMLElement | null {
         const domCursor = document.querySelector(
             `[${this.blockIdAttributeName}='${blockId}'] .${this.EditorCSS.blockContent} [${this.inlineFakeCursorAttributeName}]`,
         )
-        if (domCursor instanceof HTMLElement) return { cursor: domCursor, isInDocument: true }
+        if (domCursor instanceof HTMLElement) return domCursor
+        return null
+    }
 
-        // remove if exists
-        document.querySelector(`[${this.inlineFakeCursorAttributeName}]`)?.remove()
+    private createFakeCursor() {
         const cursor = document.createElement('div')
         cursor.setAttribute(this.inlineFakeCursorAttributeName, '')
         cursor.classList.add(this.CSS.inlineCursor)
-        return { cursor, isInDocument: false }
+        return cursor
     }
 
     private getFakeSelections(blockId: string) {
@@ -551,7 +554,8 @@ export default class GroupCollab<SocketMethodName extends string> {
             element = element.parentNode
         }
         paths.unshift(`.${this.EditorCSS.editorRedactor}`)
-        return paths.join(' > ')
+        const directChildSelector = ' > '
+        return paths.join(directChildSelector)
     }
 
     private getNodeRelativeChildIndex(node: Node): number | null {
@@ -563,4 +567,6 @@ export default class GroupCollab<SocketMethodName extends string> {
 
         return null
     }
+
+    private createSelectionElement() {}
 }

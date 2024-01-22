@@ -85,6 +85,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private onEditorBlockEvent;
     private initBlockChangeListener;
     private getFakeCursor;
+    private createFakeCursor;
     private getFakeSelections;
     private validateEventDetail;
     private addBlockToIgnoreListUntilNextRender;
@@ -96,5 +97,6 @@ export default class GroupCollab<SocketMethodName extends string> {
     private isNodeInsideOfEditor;
     private getElementXPath;
     private getNodeRelativeChildIndex;
+    private createSelectionElement;
 }
 export {};
