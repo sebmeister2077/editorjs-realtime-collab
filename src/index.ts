@@ -60,10 +60,11 @@ export type MessageData =
           typeof BlockMovedMutationType
       >
     | MakeConditionalType<
-          { elementXPath: string | null; elementNodeIndex: number; anchorOffset: number; focusOffset: number; blockId: string } & Pick<
-              DOMRect,
-              'top' | 'left'
-          >,
+          {
+              elementXPath: string | null
+              blockId: string
+              rects: Pick<DOMRect, 'top' | 'left' | 'width'>[]
+          },
           typeof UserInlineSelectionChangeType
       >
     | MakeConditionalType<{ blockId: string; isSelected: boolean }, typeof UserBlockSelectionChangeType>
@@ -101,6 +102,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private localBlockStates: Record<string, Set<'selected' | 'focused'>> = {}
     private blockIdAttributeName = 'data-id'
     private inlineFakeCursorAttributeName = 'data-realtime-fake-inline-cursor'
+    private inlineFakeSelectionAttributeName = 'data-realtime-fake-inline-selection'
     private config: LocalConfig
     public constructor({ editor, socket, socketMethodName, ...config }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
@@ -223,17 +225,24 @@ export default class GroupCollab<SocketMethodName extends string> {
         if (!parentElement) return
 
         const range = selection.getRangeAt(0)
-        const childRect = range.getBoundingClientRect()
+        const childRects: DOMRect[] = []
+        //i need this if i want to use inline selection
+        const clientRects = range.getClientRects()
+        for (let i = 0; i < clientRects.length; i++) {
+            const item = clientRects.item(i)
+            if (item) childRects.push(item)
+        }
 
         const contentAndBlockId = this.getContentAndBlockIdFromNode(anchorNode)
         if (!contentAndBlockId) return
         const { blockId, contentElement } = contentAndBlockId
         const parentRect = contentElement.getBoundingClientRect()
 
-        const finalRect: Pick<DOMRect, 'top' | 'left'> = {
+        const finalRects: Pick<DOMRect, 'top' | 'left' | 'width'>[] = childRects.map((childRect) => ({
             top: childRect.top - parentRect.top,
             left: childRect.left - parentRect.left,
-        }
+            width: childRect.width,
+        }))
 
         const elementNodeIndex = this.getNodeRelativeChildIndex(anchorNode)
         if (elementNodeIndex === null) return
@@ -243,11 +252,8 @@ export default class GroupCollab<SocketMethodName extends string> {
             type: UserInlineSelectionChangeType,
             blockId,
             elementXPath: path,
-            anchorOffset,
-            focusOffset,
-            elementNodeIndex,
-            ...finalRect,
-        } as const
+            rects: finalRects,
+        } as PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType>
         this.socket.send(this.socketMethodName, data)
     }
 
@@ -312,32 +318,46 @@ export default class GroupCollab<SocketMethodName extends string> {
             }
 
             case 'inline-selection-change': {
-                const { type, anchorOffset, elementNodeIndex, elementXPath, focusOffset, blockId, ...rect } = response
+                const { type, rects, elementXPath, blockId } = response
                 const blockContent = this.getDOMBlockById(blockId)?.querySelector(`.${this.EditorCSS.blockContent}`)
-                if (!blockContent) return
+                if (!blockContent || !rects.length) return
 
-                const isReset = elementXPath === null
+                const isSelection = rects.some((r) => r.width > 1)
+                const isReset = elementXPath === null || isSelection
                 const { cursor, isInDocument } = this.getFakeCursor(blockId)
                 if (isReset) {
                     if (isInDocument) cursor.remove()
                     return
                 }
+                console.log(response)
 
-                // //* Note if element is not found try without nth-child
-                const selectedElement = document.querySelector(elementXPath)
-                if (!(selectedElement instanceof HTMLElement)) return
+                if (isSelection) {
+                    /**
+                     * Ok so for this to work properly i have to check that the
+                     * current selection Rect width equals the distance between left and right (IN DOM content ofc)
+                     * If it doesn't then that means that the next rect should be concatenated to the current rect
+                     * (because text overflowed on the other device but not this one)
+                     */
+                    const selections = this.getFakeSelections(blockId)
+                } else {
+                    const rect = rects[0]
+                    //* Note if element is not found try without nth-child
+                    const selectedElement = document.querySelector(elementXPath)
+                    if (!(selectedElement instanceof HTMLElement)) return
 
-                const { fontSize } = window.getComputedStyle(selectedElement)
+                    //This is used to resize the height of the selection if users have different font sizes/screen zoom in/out s
+                    const { fontSize } = window.getComputedStyle(selectedElement)
 
-                cursor.style.height = fontSize
-                cursor.style.top = `${rect.top}px`
-                cursor.style.left = `${rect.left}px`
-                const { cursorClass } = this.config.overrideStyles ?? {}
-                const { color } = this.config.cursor ?? {}
-                if (color) cursor.style.setProperty('--realtime-inline-cursor-color', color)
-                if (cursorClass) cursor.classList.add(...cursorClass.split(' '))
+                    cursor.style.height = fontSize
+                    cursor.style.top = `${rect.top}px`
+                    cursor.style.left = `${rect.left}px`
+                    const { cursorClass } = this.config.overrideStyles ?? {}
+                    const { color } = this.config.cursor ?? {}
+                    if (color) cursor.style.setProperty('--realtime-inline-cursor-color', color)
+                    if (cursorClass) cursor.classList.add(...cursorClass.split(' '))
 
-                if (!isInDocument) blockContent.append(cursor)
+                    if (!isInDocument) blockContent.append(cursor)
+                }
                 break
             }
 
@@ -423,6 +443,12 @@ export default class GroupCollab<SocketMethodName extends string> {
         cursor.setAttribute(this.inlineFakeCursorAttributeName, '')
         cursor.classList.add(this.CSS.inlineCursor)
         return { cursor, isInDocument: false }
+    }
+
+    private getFakeSelections(blockId: string) {
+        return document.querySelectorAll(
+            `[${this.blockIdAttributeName}='${blockId}'] .${this.EditorCSS.blockContent} [${this.inlineFakeSelectionAttributeName}]`,
+        )
     }
 
     private validateEventDetail(ev: CustomEvent): ev is CustomEvent<PossibleEventDetails> {
