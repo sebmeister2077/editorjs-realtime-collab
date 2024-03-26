@@ -63,15 +63,18 @@ export type MessageData =
           {
               elementXPath: string | null
               blockId: string
-              elementNodeIndex: number
-              anchorOffset: number
-              focusOffset: number
-              rects: Pick<DOMRect, 'top' | 'left' | 'width'>[]
+              rects: Rect[]
+              containerWidth: number
+
+              //idk if i'll use these
+              //   elementNodeIndex: number
+              //   anchorOffset: number
+              //   focusOffset: number
           },
           typeof UserInlineSelectionChangeType
       >
     | MakeConditionalType<{ blockId: string; isSelected: boolean }, typeof UserBlockSelectionChangeType>
-
+type Rect = Pick<DOMRect, 'top' | 'left' | 'width'>
 type PossibleEventDetails = {
     target: BlockAPI
 } & (
@@ -251,14 +254,16 @@ export default class GroupCollab<SocketMethodName extends string> {
         const elementNodeIndex = this.getNodeRelativeChildIndex(anchorNode)
         if (elementNodeIndex === null) return
         const path = this.getElementXPath(parentElement)
+        const containerWidth = contentElement.clientWidth
 
         const data: PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType> = {
             type: UserInlineSelectionChangeType,
             blockId,
             elementXPath: path,
-            anchorOffset,
-            focusOffset,
-            elementNodeIndex,
+            containerWidth,
+            // anchorOffset,
+            // focusOffset,
+            // elementNodeIndex,
             rects: finalRects,
         }
         this.socket.send(this.socketMethodName, data)
@@ -581,6 +586,29 @@ export default class GroupCollab<SocketMethodName extends string> {
         }
 
         return null
+    }
+
+    private calculateRelativeRects(inputRects: Rect[], inputContainerWidth: number, currentContainer: HTMLElement): Rect[] {
+        const outputRects: Rect[] = []
+
+        const currentWidth = currentContainer.clientWidth
+        if (inputContainerWidth === currentWidth) return inputRects // Wow that was easy
+
+        const isScaledDownNow = currentWidth < inputContainerWidth
+        // ex if left+width > currentWidth => needs to be broken down
+
+        //TODO i have to wrap the content inside a span so i have the correct width 😓 maybe?
+        let currentRect = inputRects.at(0)
+        let rectWidthsSum = 0
+
+        // NOTE: when you have multiblock selection, the `Left` value indicates how much distance is between the TEXT and HtmlElement container
+        if (isScaledDownNow) {
+        } else {
+            for (const r of inputRects) {
+            }
+        }
+
+        return outputRects
     }
 
     private createSelectionElement() {

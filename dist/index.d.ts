@@ -42,14 +42,13 @@ export type MessageData = MakeConditionalType<{
 }, typeof BlockMovedMutationType> | MakeConditionalType<{
     elementXPath: string | null;
     blockId: string;
-    elementNodeIndex: number;
-    anchorOffset: number;
-    focusOffset: number;
-    rects: Pick<DOMRect, 'top' | 'left' | 'width'>[];
+    rects: Rect[];
+    containerWidth: number;
 }, typeof UserInlineSelectionChangeType> | MakeConditionalType<{
     blockId: string;
     isSelected: boolean;
 }, typeof UserBlockSelectionChangeType>;
+type Rect = Pick<DOMRect, 'top' | 'left' | 'width'>;
 export type INeededSocketFields<SocketMethodName extends string> = {
     send(socketMethod: SocketMethodName, data: MessageData): void;
     on(socketMethod: SocketMethodName, callback: (data: MessageData) => void): void;
@@ -100,6 +99,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private isNodeInsideOfEditor;
     private getElementXPath;
     private getNodeRelativeChildIndex;
+    private calculateRelativeRects;
     private createSelectionElement;
 }
 export {};
