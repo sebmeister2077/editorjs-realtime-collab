@@ -54,9 +54,10 @@
             ]
             const sessionData = sessionStorage.getItem(dataLocation)
             ;(async () => {
+                const { default: config } = await import('./config.json', { with: { type: 'json' } })
                 const pieSocket = new PieSocket.default({
-                    clusterId: 'free.blr2',
-                    apiKey: 'EkzwSF4wrqb0NHNwA0VdZKBTWFzkoVS2wzahYRJu',
+                    clusterId: config.clusterId,
+                    apiKey: config.apiKey,
                     // notifySelf: true,
                 })
 
