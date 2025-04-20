@@ -1,5 +1,5 @@
 assets/
 src/
 webpack.config.js
-
+local-testing*
 dev-build.js
