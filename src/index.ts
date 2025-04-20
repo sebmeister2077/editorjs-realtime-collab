@@ -37,53 +37,53 @@ type LocalConfig = {
 export type MessageData =
     | MakeConditionalType<{ index: number; block: SavedData }, typeof BlockAddedMutationType>
     | MakeConditionalType<
-          {
-              blockId: string
-          },
-          typeof BlockRemovedMutationType
-      >
+        {
+            blockId: string
+        },
+        typeof BlockRemovedMutationType
+    >
     | MakeConditionalType<
-          {
-              block: SavedData
-              // in case block.id is not found
-              index: number
-          },
-          typeof BlockChangedMutationType
-      >
+        {
+            block: SavedData
+            // in case block.id is not found
+            index: number
+        },
+        typeof BlockChangedMutationType
+    >
     | MakeConditionalType<
-          {
-              fromBlockId: string
-              //used to guarantee sync between editors
-              toBlockIndex: number
-              toBlockId: string
-          },
-          typeof BlockMovedMutationType
-      >
+        {
+            fromBlockId: string
+            //used to guarantee sync between editors
+            toBlockIndex: number
+            toBlockId: string
+        },
+        typeof BlockMovedMutationType
+    >
     | MakeConditionalType<
-          {
-              elementXPath: string | null
-              blockId: string
-              rects: Rect[]
-              containerWidth: number
+        {
+            elementXPath: string | null
+            blockId: string
+            rects: Rect[]
+            containerWidth: number
 
-              //idk if i'll use these
-              //   elementNodeIndex: number
-              //   anchorOffset: number
-              //   focusOffset: number
-          },
-          typeof UserInlineSelectionChangeType
-      >
+            //idk if i'll use these
+            //   elementNodeIndex: number
+            //   anchorOffset: number
+            //   focusOffset: number
+        },
+        typeof UserInlineSelectionChangeType
+    >
     | MakeConditionalType<{ blockId: string; isSelected: boolean }, typeof UserBlockSelectionChangeType>
 type Rect = Pick<DOMRect, 'top' | 'left' | 'width'>
 type PossibleEventDetails = {
     target: BlockAPI
 } & (
-    | MakeConditionalType<
-          { index: number },
-          typeof BlockAddedMutationType | typeof BlockChangedMutationType | typeof BlockRemovedMutationType
-      >
-    | MakeConditionalType<{ fromIndex: number; toIndex: number }, typeof BlockMovedMutationType>
-)
+        | MakeConditionalType<
+            { index: number },
+            typeof BlockAddedMutationType | typeof BlockChangedMutationType | typeof BlockRemovedMutationType
+        >
+        | MakeConditionalType<{ fromIndex: number; toIndex: number }, typeof BlockMovedMutationType>
+    )
 
 type EditorEvents = keyof BlockMutationEventMap
 type Events = EditorEvents | typeof UserInlineSelectionChangeType | typeof UserBlockSelectionChangeType

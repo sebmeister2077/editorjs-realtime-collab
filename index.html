@@ -56,10 +56,31 @@
             ;(async () => {
                 const pieSocket = new PieSocket.default({
                     clusterId: 'free.blr2',
-                    apiKey: 'ucF3OH2Stp93Mnqid7F0wfo9iwdLOiDI4f7DiL49',
+                    apiKey: 'EkzwSF4wrqb0NHNwA0VdZKBTWFzkoVS2wzahYRJu',
                     // notifySelf: true,
                 })
+
                 const channel = await pieSocket.subscribe('test-lol')
+                console.log('🚀 ~ ; ~ channel:', channel)
+                const socket = channel.connection
+                if (socket instanceof WebSocket) {
+                    try {
+                        await new Promise((res, rej) => {
+                            const inactiveAccountError = '{"error":"PieSocket account in inactive."}'
+                            socket.addEventListener('message', (e) => {
+                                if (e.data == inactiveAccountError) {
+                                    toastr.error('Socket connection seems to be down')
+                                    rej()
+                                }
+                                res()
+                            })
+                            setTimeout(res, 1000)
+                        })
+                    } catch {
+                        return
+                    }
+                }
+
                 console.log('socket subscribed')
 
                 console.log(channel.members)
@@ -83,6 +104,7 @@
                 })
 
                 channel.publish(askEvent)
+
                 timeout = setTimeout(initEditorWithOrWithoutData, askTimeout)
                 async function initEditorWithOrWithoutData(otherUserData) {
                     if (isEditorInstantiated) return
