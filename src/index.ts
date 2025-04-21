@@ -180,6 +180,10 @@ export default class GroupCollab<SocketMethodName extends string> {
             selected: 'ce-block--selected',
             editorRedactor: 'codex-editor__redactor',
             blockContent: 'ce-block__content',
+            table: {
+                row: "tc-row",
+                cell: "tc-cell"
+            }
         }
     }
 
@@ -441,6 +445,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             const savedData = await target.save()
             if (!savedData) return
 
+            this.applyNeccessaryChanges(target, savedData);
             const socketData: MessageData = {
                 type: 'block-changed',
                 block: savedData,
@@ -586,6 +591,28 @@ export default class GroupCollab<SocketMethodName extends string> {
         }
 
         return null
+    }
+
+    private applyNeccessaryChanges(target: BlockAPI, savedData: SavedData) {
+        switch (target.name) {
+            case "table": {
+                const rows = target.holder.querySelectorAll(`.${this.EditorCSS.table.row}`);
+                rows.forEach((row, idx) => {
+                    const cells = Array.from(row.querySelectorAll(`.${this.EditorCSS.table.cell}`))
+                    const areAllEmpty = cells.every(cell => !cell.textContent?.trim())
+                    if (!areAllEmpty) return;
+
+                    // i need to make this row not disappear on one screen but remain on the other.
+                    const content = savedData.data?.content
+                    if (content instanceof Array) {
+                        content.splice(idx, 0,
+                            cells.map(c => c.textContent)
+                        )
+                    }
+                })
+                break;
+            }
+        }
     }
 
     private calculateRelativeRects(inputRects: Rect[], inputContainerWidth: number, currentContainer: HTMLElement): Rect[] {

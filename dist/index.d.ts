@@ -99,6 +99,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private isNodeInsideOfEditor;
     private getElementXPath;
     private getNodeRelativeChildIndex;
+    private applyNeccessaryChanges;
     private calculateRelativeRects;
     private createSelectionElement;
 }
