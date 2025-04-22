@@ -340,8 +340,18 @@ export default class GroupCollab<SocketMethodName extends string> {
                 this.addBlockToIgnoreListUntilNextRender(blockId, response.type)
                 const block = this.getDOMBlockById(blockId)
                 if (!block) return
-                if (isSelected) block.classList.add(this.CSS.selected, this.config.overrideStyles?.selectedClass ?? '')
-                else block.classList.remove(this.CSS.selected, this.config.overrideStyles?.selectedClass ?? '')
+
+                if (isSelected) {
+                    block.classList.add(this.CSS.selected)
+                    if (this.config.overrideStyles?.selectedClass)
+                        block.classList.add(this.config.overrideStyles.selectedClass)
+                }
+                else {
+                    block.classList.remove(this.CSS.selected)
+                    if (this.config.overrideStyles?.selectedClass)
+                        block.classList.remove(this.config.overrideStyles.selectedClass)
+                }
+
                 break
             }
 
