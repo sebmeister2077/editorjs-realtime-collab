@@ -13,6 +13,7 @@ import './index.css'
 
 const UserInlineSelectionChangeType = 'inline-selection-change'
 const UserBlockSelectionChangeType = 'block-selection-change'
+const UserDisconnectedType = 'user-disconnected'
 
 export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     editor: EditorJS
@@ -66,6 +67,7 @@ export type MessageData =
             rects: Rect[]
             containerWidth: number
 
+            connectionId: string;
             //idk if i'll use these
             //   elementNodeIndex: number
             //   anchorOffset: number
@@ -73,6 +75,7 @@ export type MessageData =
         },
         typeof UserInlineSelectionChangeType
     >
+    | MakeConditionalType<{ connectionId: string }, typeof UserDisconnectedType>
     | MakeConditionalType<{ blockId: string; isSelected: boolean }, typeof UserBlockSelectionChangeType>
 type Rect = Pick<DOMRect, 'top' | 'left' | 'width'>
 type PossibleEventDetails = {
@@ -91,7 +94,8 @@ type Events = EditorEvents | typeof UserInlineSelectionChangeType | typeof UserB
 export type INeededSocketFields<SocketMethodName extends string> = {
     send(socketMethod: SocketMethodName, data: MessageData): void
     on(socketMethod: SocketMethodName, callback: (data: MessageData) => void): void
-    off(socketMethod: SocketMethodName): void
+    off(socketMethod: SocketMethodName): void;
+    connectionId: string;
 }
 
 export default class GroupCollab<SocketMethodName extends string> {
@@ -142,6 +146,8 @@ export default class GroupCollab<SocketMethodName extends string> {
         this.editor.off(this.editorBlockEvent, this.onEditorBlockEvent)
         this.observer.disconnect()
         document.removeEventListener('selectionchange', this.onInlineSelectionChange)
+        window.removeEventListener("beforeunload", this.onDisconnect, { capture: true })
+        this.socket.send(this.socketMethodName, { type: UserDisconnectedType, connectionId: this.socket.connectionId })
 
         this._isListening = false
     }
@@ -162,6 +168,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             subtree: true,
         })
         document.addEventListener('selectionchange', this.onInlineSelectionChange)
+        window.addEventListener("beforeunload", this.onDisconnect, { capture: true })
 
         this._isListening = true
     }
@@ -269,8 +276,13 @@ export default class GroupCollab<SocketMethodName extends string> {
             // focusOffset,
             // elementNodeIndex,
             rects: finalRects,
+            connectionId: this.socket.connectionId
         }
         this.socket.send(this.socketMethodName, data)
+    }
+
+    private onDisconnect = (e: Event) => {
+        this.socket.send(this.socketMethodName, { type: UserDisconnectedType, connectionId: this.socket.connectionId })
     }
 
     private onReceiveChange = (response: MessageData) => {
@@ -334,19 +346,19 @@ export default class GroupCollab<SocketMethodName extends string> {
             }
 
             case 'inline-selection-change': {
-                const { type, rects, elementXPath, blockId } = response
+                const { type, rects, elementXPath, blockId, connectionId } = response
                 const blockContent = this.getDOMBlockById(blockId)?.querySelector(`.${this.EditorCSS.blockContent}`)
                 if (!blockContent || !rects.length) return
 
                 const isSelection = rects.some((r) => r.width > 1)
                 const isReset = elementXPath === null || isSelection
-                let cursor = this.getFakeCursor(blockId)
+                let cursor = this.getFakeCursor({ connectionId })
                 const cursorExists = Boolean(cursor)
                 if (isReset) {
                     cursor?.remove()
                     return
                 }
-                console.log(response)
+                // console.log(response)
 
                 if (isSelection) {
                     const MARGIN_OF_ERROR = 6 //px
@@ -365,7 +377,7 @@ export default class GroupCollab<SocketMethodName extends string> {
 
                     // }
                 } else {
-                    if (!cursor) cursor = this.createFakeCursor()
+                    if (!cursor) cursor = this.createFakeCursor(connectionId)
                     const rect = rects[0]
                     //* Note if element is not found try without nth-child
                     const selectedElement = document.querySelector(elementXPath)
@@ -377,13 +389,25 @@ export default class GroupCollab<SocketMethodName extends string> {
                     cursor.style.height = fontSize
                     cursor.style.top = `${rect.top}px`
                     cursor.style.left = `${rect.left}px`
+
+
+
+
                     const { cursorClass } = this.config.overrideStyles ?? {}
                     const { color } = this.config.cursor ?? {}
                     if (color) cursor.style.setProperty('--realtime-inline-cursor-color', color)
                     if (cursorClass) cursor.classList.add(...cursorClass.split(' '))
 
-                    if (!cursorExists) blockContent.append(cursor)
+                    if (!cursorExists || !blockContent.contains(cursor)) blockContent.append(cursor)
                 }
+                break
+            }
+
+            case 'user-disconnected': {
+                const { connectionId } = response
+                const cursor = this.getFakeCursor({ connectionId })
+
+                cursor?.remove()
                 break
             }
 
@@ -458,17 +482,20 @@ export default class GroupCollab<SocketMethodName extends string> {
         })
     }
 
-    private getFakeCursor(blockId: string): HTMLElement | null {
+    private getFakeCursor({ blockId, connectionId }: Partial<Record<"blockId" | "connectionId", string>>): HTMLElement | null {
+        if (!blockId && !connectionId) return null
+        const blockIdQuery = blockId ? `='${blockId}'` : "";
+        const connQuery = connectionId ? `='${connectionId}'` : ""
         const domCursor = document.querySelector(
-            `[${this.blockIdAttributeName}='${blockId}'] .${this.EditorCSS.blockContent} [${this.inlineFakeCursorAttributeName}]`,
+            `[${this.blockIdAttributeName}${blockIdQuery}] .${this.EditorCSS.blockContent} [${this.inlineFakeCursorAttributeName}${connQuery}]`,
         )
         if (domCursor instanceof HTMLElement) return domCursor
         return null
     }
 
-    private createFakeCursor() {
+    private createFakeCursor(connectionId: string) {
         const cursor = document.createElement('div')
-        cursor.setAttribute(this.inlineFakeCursorAttributeName, '')
+        cursor.setAttribute(this.inlineFakeCursorAttributeName, connectionId)
         cursor.classList.add(this.CSS.inlineCursor)
         return cursor
     }

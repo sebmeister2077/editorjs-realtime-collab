@@ -4,6 +4,7 @@ import { type MakeConditionalType } from './UtilityTypes';
 import './index.css';
 declare const UserInlineSelectionChangeType = "inline-selection-change";
 declare const UserBlockSelectionChangeType = "block-selection-change";
+declare const UserDisconnectedType = "user-disconnected";
 export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     editor: EditorJS;
     socket: INeededSocketFields<SocketMethodName>;
@@ -44,7 +45,10 @@ export type MessageData = MakeConditionalType<{
     blockId: string;
     rects: Rect[];
     containerWidth: number;
+    connectionId: string;
 }, typeof UserInlineSelectionChangeType> | MakeConditionalType<{
+    connectionId: string;
+}, typeof UserDisconnectedType> | MakeConditionalType<{
     blockId: string;
     isSelected: boolean;
 }, typeof UserBlockSelectionChangeType>;
@@ -53,6 +57,7 @@ export type INeededSocketFields<SocketMethodName extends string> = {
     send(socketMethod: SocketMethodName, data: MessageData): void;
     on(socketMethod: SocketMethodName, callback: (data: MessageData) => void): void;
     off(socketMethod: SocketMethodName): void;
+    connectionId: string;
 };
 export default class GroupCollab<SocketMethodName extends string> {
     private editor;
@@ -83,6 +88,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private get EditorCSS();
     private handleMutation;
     private onInlineSelectionChange;
+    private onDisconnect;
     private onReceiveChange;
     private onEditorBlockEvent;
     private initBlockChangeListener;
