@@ -4,6 +4,7 @@ import { type MakeConditionalType } from './UtilityTypes';
 import './index.css';
 declare const UserInlineSelectionChangeType = "inline-selection-change";
 declare const UserBlockSelectionChangeType = "block-selection-change";
+declare const UserBlockDeletionChangeType = "block-deletion-change";
 declare const UserDisconnectedType = "user-disconnected";
 export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     editor: EditorJS;
@@ -26,6 +27,7 @@ type LocalConfig = {
     overrideStyles?: {
         cursorClass?: string;
         selectedClass?: string;
+        pendingDeletionClass?: string;
     };
 };
 export type MessageData = MakeConditionalType<{
@@ -50,6 +52,9 @@ export type MessageData = MakeConditionalType<{
     connectionId: string;
 }, typeof UserDisconnectedType> | MakeConditionalType<{
     blockId: string;
+    isDeletePending: boolean;
+}, typeof UserBlockDeletionChangeType> | MakeConditionalType<{
+    blockId: string;
     isSelected: boolean;
 }, typeof UserBlockSelectionChangeType>;
 type Rect = Pick<DOMRect, 'top' | 'left' | 'width'>;
@@ -67,7 +72,8 @@ export default class GroupCollab<SocketMethodName extends string> {
     private editorDomChangedEvent;
     private _isListening;
     private ignoreEvents;
-    private observer;
+    private redactorObserver;
+    private toolboxObserver;
     private handleBlockChange?;
     private localBlockStates;
     private blockIdAttributeName;
@@ -87,6 +93,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private get CSS();
     private get EditorCSS();
     private handleMutation;
+    private handleToolboxMutation;
     private onInlineSelectionChange;
     private onDisconnect;
     private onReceiveChange;

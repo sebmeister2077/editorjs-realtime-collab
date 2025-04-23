@@ -13,6 +13,7 @@ import './index.css'
 
 const UserInlineSelectionChangeType = 'inline-selection-change'
 const UserBlockSelectionChangeType = 'block-selection-change'
+const UserBlockDeletionChangeType = 'block-deletion-change'
 const UserDisconnectedType = 'user-disconnected'
 
 export type GroupCollabConfigOptions<SocketMethodName extends string> = {
@@ -32,7 +33,7 @@ type LocalConfig = {
      */
     blockChangeThrottleDelay: number
     cursor?: { color?: string }
-    overrideStyles?: { cursorClass?: string; selectedClass?: string }
+    overrideStyles?: { cursorClass?: string; selectedClass?: string, pendingDeletionClass?: string }
 }
 
 export type MessageData =
@@ -76,6 +77,7 @@ export type MessageData =
         typeof UserInlineSelectionChangeType
     >
     | MakeConditionalType<{ connectionId: string }, typeof UserDisconnectedType>
+    | MakeConditionalType<{ blockId: string; isDeletePending: boolean }, typeof UserBlockDeletionChangeType>
     | MakeConditionalType<{ blockId: string; isSelected: boolean }, typeof UserBlockSelectionChangeType>
 type Rect = Pick<DOMRect, 'top' | 'left' | 'width'>
 type PossibleEventDetails = {
@@ -89,7 +91,7 @@ type PossibleEventDetails = {
     )
 
 type EditorEvents = keyof BlockMutationEventMap
-type Events = EditorEvents | typeof UserInlineSelectionChangeType | typeof UserBlockSelectionChangeType
+type Events = EditorEvents | typeof UserInlineSelectionChangeType | typeof UserBlockSelectionChangeType | typeof UserBlockDeletionChangeType
 
 export type INeededSocketFields<SocketMethodName extends string> = {
     send(socketMethod: SocketMethodName, data: MessageData): void
@@ -107,9 +109,10 @@ export default class GroupCollab<SocketMethodName extends string> {
     private _isListening = false
     // events to ignore until next render
     private ignoreEvents: Record<string, Set<Events>> = {}
-    private observer: MutationObserver
+    private redactorObserver: MutationObserver
+    private toolboxObserver: MutationObserver;
     private handleBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
-    private localBlockStates: Record<string, Set<'selected' | 'focused'>> = {}
+    private localBlockStates: Record<string, Set<'selected' | 'focused' | "deleting">> = {}
     private blockIdAttributeName = 'data-id'
     private inlineFakeCursorAttributeName = 'data-realtime-fake-inline-cursor'
     private inlineFakeSelectionAttributeName = 'data-realtime-fake-inline-selection'
@@ -126,10 +129,16 @@ export default class GroupCollab<SocketMethodName extends string> {
             ...defaultConfig,
             ...(config ?? {}),
         }
-        this.observer = new MutationObserver((mutations, observer) => {
+        this.redactorObserver = new MutationObserver((mutations, observer) => {
             for (let mutation of mutations) {
                 this.handleMutation(mutation)
             }
+        })
+
+        this.toolboxObserver = new MutationObserver((mutations, observer) => {
+            const lastMutation = mutations.at(-1)
+            if (!lastMutation) return
+            this.handleToolboxMutation(lastMutation)
         })
 
         this.initBlockChangeListener()
@@ -144,7 +153,8 @@ export default class GroupCollab<SocketMethodName extends string> {
     public unlisten() {
         this.socket.off(this.socketMethodName)
         this.editor.off(this.editorBlockEvent, this.onEditorBlockEvent)
-        this.observer.disconnect()
+        this.redactorObserver.disconnect()
+        this.toolboxObserver.disconnect()
         document.removeEventListener('selectionchange', this.onInlineSelectionChange)
         window.removeEventListener("beforeunload", this.onDisconnect, { capture: true })
         this.socket.send(this.socketMethodName, { type: UserDisconnectedType, connectionId: this.socket.connectionId })
@@ -161,12 +171,22 @@ export default class GroupCollab<SocketMethodName extends string> {
             (this.editor as any)?.ui.redactor ??
             document.querySelector(`#${(this.editor as any)?.configuration.holder} .${this.EditorCSS.editorRedactor}`) ??
             document.querySelector(`.${this.EditorCSS.editorRedactor}`)
-        this.observer.observe(redactor, {
+        this.redactorObserver.observe(redactor, {
             childList: true,
             attributes: true,
             attributeFilter: ['class'],
             subtree: true,
         })
+        const toolboxSettingsEl = document.querySelector(`#${(this.editor as any)?.configuration?.holder ?? ""} .${this.EditorCSS.toolbarSettings}`) ?? document.querySelector(`.${this.EditorCSS.toolbarSettings}`)
+        if (toolboxSettingsEl)
+            this.toolboxObserver.observe(toolboxSettingsEl, {
+                childList: true,
+                attributes: true,
+                attributeFilter: ["class"],
+                subtree: true
+            })
+        else
+            console.error("Could not initialize toolbox observer.")
         document.addEventListener('selectionchange', this.onInlineSelectionChange)
         window.addEventListener("beforeunload", this.onDisconnect, { capture: true })
 
@@ -178,6 +198,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             selected: 'cdx-realtime-block--selected',
             inlineCursor: 'cdx-realtime-inline-cursor',
             inlineSelection: 'cdx-realtime-inline-selection',
+            deletePending: "cdx-realtime-block--delete-pending"
         }
     }
     private get EditorCSS() {
@@ -187,6 +208,9 @@ export default class GroupCollab<SocketMethodName extends string> {
             selected: 'ce-block--selected',
             editorRedactor: 'codex-editor__redactor',
             blockContent: 'ce-block__content',
+            toolbar: "ce-toolbar",
+            toolbarSettings: "ce-settings",
+            toolbarDeleteSetting: "[data-item-name='delete']",
             table: {
                 row: "tc-row",
                 cell: "tc-cell"
@@ -203,7 +227,6 @@ export default class GroupCollab<SocketMethodName extends string> {
         const isFocused = target.classList.contains(this.EditorCSS.focused)
         const blockId = target.getAttribute(this.blockIdAttributeName)
         if (!blockId) return
-
         // we need to save the current selected & focus state for each block or else we are sending too much data through socket
         if (this.localBlockStates[blockId]?.has('selected') != isSelected) {
             if (this.ignoreEvents[blockId]?.has(UserBlockSelectionChangeType)) return
@@ -228,6 +251,43 @@ export default class GroupCollab<SocketMethodName extends string> {
         // }
 
         if (!this.localBlockStates[blockId].size) delete this.localBlockStates[blockId]
+    }
+
+    private handleToolboxMutation(mutation: MutationRecord): void {
+        const { target } = mutation
+        if (!(target instanceof HTMLElement)) return
+
+        //? This might not work for all editor versions
+        const isToolbarClosing = target.innerHTML === '';
+
+        const currentIndex = this.editor.blocks.getCurrentBlockIndex()
+        const blockApi = this.editor.blocks.getBlockByIndex(currentIndex)
+        if (!blockApi) return;
+
+        let isDeletePending = false;
+        if (!isToolbarClosing) {
+            const toolboxDeleteSetting = document.querySelector(`.${this.EditorCSS.toolbar} ${this.EditorCSS.toolbarDeleteSetting}`)
+            if (!(toolboxDeleteSetting instanceof HTMLElement)) return;
+            // console.log("🚀 toolboxDeleteSetting:", toolboxDeleteSetting)
+
+            isDeletePending = toolboxDeleteSetting.classList.contains("ce-popover-item--confirmation")
+        }
+
+        const blockId = blockApi.id;
+
+        if (this.localBlockStates[blockId]?.has('deleting') != isDeletePending) {
+            if (this.ignoreEvents[blockId]?.has(UserBlockDeletionChangeType)) return
+            this.localBlockStates[blockId] ??= new Set()
+
+            if (isDeletePending) this.localBlockStates[blockId].add('deleting')
+            else this.localBlockStates[blockId].delete('deleting')
+
+            this.socket.send(this.socketMethodName, {
+                type: UserBlockDeletionChangeType,
+                blockId,
+                isDeletePending
+            })
+        }
     }
 
     private onInlineSelectionChange = (e: Event) => {
@@ -307,11 +367,13 @@ export default class GroupCollab<SocketMethodName extends string> {
                     })
                     .then(() => {
                         // some blocks when being selected emit a block-changed event
-                        if (customClassList?.contains(this.CSS.selected))
-                            this.getDOMBlockById(block.id)?.classList.add(
-                                this.CSS.selected,
-                                this.config.overrideStyles?.selectedClass ?? '',
-                            )
+                        if (customClassList?.contains(this.CSS.selected)) {
+                            const domBlock = this.getDOMBlockById(block.id);
+                            if (!domBlock) return;
+                            domBlock.classList.add(this.CSS.selected)
+                            if (this.config.overrideStyles?.selectedClass)
+                                domBlock.classList.add(this.config.overrideStyles.selectedClass)
+                        }
                     })
                 break
             }
@@ -353,6 +415,24 @@ export default class GroupCollab<SocketMethodName extends string> {
                 }
 
                 break
+            }
+
+            case 'block-deletion-change': {
+                const { blockId, isDeletePending } = response
+                this.addBlockToIgnoreListUntilNextRender(blockId, response.type)
+                const block = this.getDOMBlockById(blockId)
+                if (!block) return
+
+                if (isDeletePending) {
+                    block.classList.add(this.CSS.deletePending)
+                    if (this.config.overrideStyles?.pendingDeletionClass)
+                        block.classList.add(this.config.overrideStyles.pendingDeletionClass)
+                } else {
+                    block.classList.remove(this.CSS.deletePending)
+                    if (this.config.overrideStyles?.pendingDeletionClass)
+                        block.classList.remove(this.config.overrideStyles.pendingDeletionClass)
+                }
+                break;
             }
 
             case 'inline-selection-change': {

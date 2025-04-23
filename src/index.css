@@ -13,12 +13,22 @@
     z-index: -1;
     background-color: #e1f2ff99;
 }
+
+.cdx-realtime-block--delete-pending .ce-block__content::before {
+    content: '';
+    position: absolute;
+    inset: 0px;
+    z-index: -1;
+    background-color: #E24A4A;
+}
+
 .cdx-realtime-block--selected .ce-block__content [contenteditable] {
     -webkit-user-select: none;
     -moz-user-select: none;
     -ms-user-select: none;
     user-select: none;
 }
+
 .cdx-realtime-block--selected .ce-block__content img,
 .cdx-realtime-block--selected .ce-block__content .ce-stub {
     opacity: 0.55;
@@ -32,11 +42,14 @@
     animation: cursor-blink 0.6s infinite alternate ease-in-out;
 }
 
+
 @keyframes cursor-blink {
+
     0%,
     30% {
         background-color: var(--realtime-inline-cursor-color, #0d0c0f);
     }
+
     100%,
     70% {
         background-color: transparent;

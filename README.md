@@ -141,4 +141,4 @@ new RealtimeCollabPlugin({
 | socketMethodName         | `string`                                        | The event name to use when communicating between sockets | `editorjs-update`    |
 | blockChangeThrottleDelay | `number`                                        | Delay to throttle block changes (ms).                    | `300`                |
 | cursor                   | `{ color: string }`                             | Cursor configuration                                     | `{ color: #0d0c0f }` |
-| overrideStyles           | `{ cursorClass: string; selectedClass:string }` | Class overrides                                          | `{}`                 |
+| overrideStyles           | `{ cursorClass: string; selectedClass:string; pendingDeletionClass: string }` | Class overrides                                          | `{}`                 |
