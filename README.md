@@ -23,7 +23,7 @@ const editor = new EditorJS({
 
 const realtimeCollab = new RealtimeCollabPlugin({
     editor,
-    socket: socketInstance,
+    socket: socketInstance, // & connectionId
     // name of the socket event, defaults to 'editorjs-update'
     socketMethodName: 'yourNameOfChoice',
 })
@@ -60,11 +60,11 @@ new GroupCollab({
 
 // Microsoft signalR
 const connection = new signalR.HubConnectionBuilder().withUrl('/chat').build()
-
+const connectionId="userId"
 connection.start().then(() => {
     new GroupCollab({
         editor,
-        socket: connection,
+        socket: {...connection, connectionId},
     })
 })
 ```
@@ -94,12 +94,14 @@ socket.addEventListener('open', async (e) => {
     const off = (eventName) => {
         /* handle unsubscribing logic */
     }
+    const connectionId="..."
     const groupCollab = new RealtimeCollabPlugin({
         editor,
         socket: {
             send,
             on,
             off,
+            connectionId
         },
     })
 })
@@ -124,6 +126,7 @@ const socket = {
     off: () => {
         /* unsubscribing logic */
     },
+    connectionId:"user id or whatever"
 }
 
 new RealtimeCollabPlugin({

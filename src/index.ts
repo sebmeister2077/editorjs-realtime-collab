@@ -120,6 +120,10 @@ export default class GroupCollab<SocketMethodName extends string> {
     public constructor({ editor, socket, socketMethodName, ...config }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
         this.socket = socket
+        if (!this.socket.connectionId) {
+            console.error("{connectionId} is not set for EditorJSGroupCollab plugin. Some features might not work")
+            this.socket.connectionId = "random-" + crypto.randomUUID();
+        }
         this.socketMethodName = socketMethodName ?? ('editorjs-update' as SocketMethodName)
 
         const defaultConfig: LocalConfig = {
