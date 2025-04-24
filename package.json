@@ -4,7 +4,8 @@
     "description": "Concurrent real-time plugin for EditorJS",
     "scripts": {
         "build": "webpack --mode production",
-        "build:dev": "webpack --mode development --watch --output-filename=dev-build.js"
+        "build:dev": "webpack --mode development --watch --output-filename=dev-build.js",
+        "test": "cypress open"
     },
     "author": "sebmeister2077",
     "license": "MIT",
@@ -19,6 +20,7 @@
         "@types/throttle-debounce": "^5.0.2",
         "babel-loader": "^9.1.3",
         "css-loader": "^6.8.1",
+        "cypress": "^14.3.2",
         "raw-loader": "^4.0.2",
         "style-loader": "^3.3.3",
         "ts-loader": "^9.5.1",

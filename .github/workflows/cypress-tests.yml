@@ -1,0 +1,41 @@
+name: Cypress Tests
+
+on:
+    push:
+        branches:
+            - main
+    pull_request:
+        branches:
+    workflow_dispatch:
+
+jobs:
+    cypress:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v3
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v3
+              with:
+                  node-version: 18 # Use the version compatible with your project
+
+            - name: Install Dependencies
+              run: npm install
+
+            - name: Install Python (for the HTTP server)
+              run: sudo apt-get install -y python3
+
+            - name: Build js bundle file
+              run: webpack --mode development --output-filename=dev-build.js
+
+            - name: Start HTTP Server & Run Cypress Tests
+              run: |
+                  python3 -m http.server 5500 & 
+                  sleep 15 &
+                  echo "HTML is being hosted temporarily on http://127.0.0.1:5500" &
+                  npx cypress run
+              working-directory: ./ # Adjust if your HTML file is in a subfolder
+              env:
+                  CYPRESS_BASE_URL: http://127.0.0.1:5500 # Set the base URL if needed
