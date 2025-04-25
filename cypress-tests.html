@@ -19,8 +19,9 @@
             <div id="holder2"></div>
         </div>
         <script>
-            initEditor('holder2')
-            initEditor('holder1')
+            if (!window.editors) window.editors = {}
+            window.editors['holder2'] = initEditor('holder2')
+            window.editors['holder1'] = initEditor('holder1')
             async function initEditor(holder) {
                 const { default: config } = await import('./config.json', { with: { type: 'json' } })
                 const pieSocket = new PieSocket.default({
@@ -33,25 +34,25 @@
 
                 let data
                 try {
-                    data = await (await fetch('/get-data')).json()
-                } catch {
-                    console.error('no fixture has been provided')
-                    data = await import('./cypress/fixtures/example.json', { with: { type: 'json' } })
+                    const req = await fetch('/get-data', { signal: AbortSignal.timeout(400) })
+                    data = await req.json()
+                } catch (e) {
+                    console.error('no fixture has been provided', e)
+                    data = (await import('./cypress/fixtures/example.json', { with: { type: 'json' } })).default
                 }
 
                 const editor = new EditorJS({
-                    data,
+                    data: {
+                        blocks: data,
+                    },
                     holder,
                     tools: {
                         header: Header,
                         table: Table,
                     },
                 })
-                if (!window.editors) window.editors = {}
-                window.editors[holder] = editor
 
                 await editor.isReady
-
                 const send = (name, data) => {
                     // console.log('🚀 ~ file: local-testing.html:76 ~ send ~ data:', data)
 

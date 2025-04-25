@@ -3,14 +3,14 @@
         "id": "firstid",
         "type": "paragraph",
         "data": {
-            "text": "This is some default text"
+            "text": "This is some default text from fixture"
         }
     },
     {
         "id": "secondid",
         "type": "paragraph",
         "data": {
-            "text": "This is some other text"
+            "text": "FIxture second paragraph for testing"
         }
     }
 ]
