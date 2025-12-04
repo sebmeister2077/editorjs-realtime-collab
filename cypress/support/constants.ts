@@ -6,3 +6,10 @@ export const EDITOR_CLASSES = {
     ToolbarIndentRoot: "ce-popover-indent-item",
 } as const;
 
+export const HOLDERS = {
+    holder1: "holder1",
+    holder2: "holder2",
+    getAllHolders() {
+        return [this.holder1, this.holder2]
+    }
+} as const
