@@ -293,8 +293,8 @@ graph TD
   Server -->|MessageData| SocketB[Socket Adapter]
   Server -->|MessageData| SocketC[Socket Adapter]
 
-  SocketB -->|on"(MessageData)"| PluginB[RealtimeCollabPlugin]
-  SocketC -->|on"(MessageData)"| PluginC[RealtimeCollabPlugin]
+  SocketB -->|"on(MessageData)"| PluginB[RealtimeCollabPlugin]
+  SocketC -->|"on(MessageData)"| PluginC[RealtimeCollabPlugin]
 
   PluginB -->|Apply Mutations| UserB[User B<br/>Editor.js]
   PluginC -->|Apply Mutations| UserC[User C<br/>Editor.js]
