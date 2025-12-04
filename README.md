@@ -1,79 +1,177 @@
-# EditorJS Realtime Plugin
+# EditorJS Realtime Collaboration Plugin
 
-Realtime plugin for [Editor.js](https://editorjs.io).
+A realtime collaboration plugin for [Editor.js](https://editorjs.io)
+that synchronizes block changes, cursor selections, and deletion states across multiple clients using your socket implementation of choice.
 
-You can check out this
-[Demo](https://sebmeister2077.github.io/editorjs-realtime-collab/)
+[Live Demo](https://sebmeister2077.github.io/editorjs-realtime-collab/)
 
-## Instalation
+## Features
+
+- ✅ Realtime block add / update / move / delete
+
+- ✅ Inline cursor & text selection visualization
+
+- ✅ Block-level selection + pending deletion state
+
+- ✅ Works with **any socket implementation**
+
+- ✅ Type-safe TypeScript API
+
+- ✅ Throttled updates for performance
+
+## Installation
 
 ```shell
 npm i editorjs-realtime-collab
 ```
 
-## Usage
+## Basic Usage
 
 ```js
 import EditorJS from '@editorjs/editorjs'
 import RealtimeCollabPlugin from 'editorjs-realtime-collab'
 
 const editor = new EditorJS({
-    //...
+    holder: 'editor',
+    // other EditorJS config
 })
 
 const realtimeCollab = new RealtimeCollabPlugin({
     editor,
-    socket: socketInstance, // & connectionId
-    // name of the socket event, defaults to 'editorjs-update'
-    socketMethodName: 'yourNameOfChoice',
+    socket: socketInstance,
 })
 ```
 
-And now the plugin automatically starts listening for any events
+Once instantiated, the plugin **automatically starts listening** for:
 
-## Manually listen and unlisten to the editor events
+- Editor.js block mutations
+
+- DOM selection changes
+
+- Incoming socket messages
+
+No extra setup is required.
+
+## Socket Interface Contract
+
+The plugin does **not** depend on Socket.IO, SignalR, or any specific library.
+
+Your socket only needs to implement this interface:
+
+```ts
+interface NeededSocketFields<SocketEventName extends string> {
+  send(event: SocketEventName, data: MessageData): void
+  on(event: SocketEventName, callback: (data: MessageData) => void): void
+  off(event: SocketEventName): void
+  connectionId: string
+}
+
+```
+
+`connectionId`
+
+- Must uniquely identify the current user/session
+
+- Used to ignore self-sent updates
+
+- Used to associate cursors & selections with users
+
+## Configuration Options
+
+```ts
+new RealtimeCollabPlugin({
+  editor,
+  socket,
+  socketMethodName?,
+  blockChangeThrottleDelay?,
+  cursor?,
+  overrideStyles?,
+})
+
+
+```
+
+## Config Params
+
+| Field                    | Type                                            | Description                                              | Default              |
+| ------------------------ | ----------------------------------------------- | -------------------------------------------------------- | -------------------- |
+| editor                   | `EditorJS`                                      | The editorJs instance you want to listen to              | `required*`          |
+| socket                   | `INeededSocketFields`                                        | The socket instance (or custom method bingings)          | `required*`          |
+| socketMethodName         | `string`                                        | The event name to use when communicating between sockets | `editorjs-update`    |
+| blockChangeThrottleDelay | `number`                                        | Delay to throttle block changes (ms).                    | `300`                |
+| cursor.color                   | `string`                             | Color of remote cursors configuration                                     | `#0d0c0f` |
+| overrideStyles.cursorClass           | `string` | Override selected block class                                          | —                 |
+| overrideStyles.cursorClass           | `string` | Override cursor CSS class                                          | —                 |
+| overrideStyles.pendingDeletionClass           | `string` | Override delete-pending block class                                          | —                 |
+
+## Listening Control
+
+By default, the plugin starts listening immediately.
+
+You can manually control listeners if needed:
 
 ```js
-// remove all listeners (socket, editor, document)
+// Stop listening to editor + socket + DOM
 realtimeCollab.unlisten()
 
-// manually re-add all listeners
+// Re-enable all listeners
 realtimeCollab.listen()
 
-//check for internal listening state if needed
+// Check listening state
 if (realtimeCollab.isListening) {
-    /*...*/
+  // ...
 }
 ```
 
+This is useful when:
+
+- Temporarily disabling collaboration
+
+- Switching documents
+
+- Cleaning up in SPA route changes
+
 ## Examples
 
+### Socket.IO
+
 ```ts
-// Socket.io example
-
-const socket = io('wss://example.com/chat')
-
+import { io } from 'socket.io-client'
+const socketInstance = io('wss://example.com/chat')
+const connectionId = "user-id"
 new GroupCollab({
     editor,
-    socket,
+    socket: { 
+        ...socketInstance, 
+        connectionId 
+    },
 })
+```
 
-// Microsoft signalR
-const connection = new signalR.HubConnectionBuilder().withUrl('/chat').build()
-const connectionId="userId"
+### Microsoft SignalR
+
+```ts
+const connection = new signalR.HubConnectionBuilder()
+  .withUrl('/chat')
+  .build()
+const connectionId = "user-id"
 connection.start().then(() => {
     new GroupCollab({
         editor,
-        socket: {...connection, connectionId},
+        socket: {
+            send: connection.send.bind(connection),
+            on: connection.on.bind(connection),
+            off: connection.off.bind(connection),
+            connectionId,
+        },
     })
 })
 ```
 
-If your socket does not have the exact interface names & types you can always custom bind your socket
+### Native WebSocket (Custom Binding)
 
 ```ts
-// Native Browser WebSocket
-const socket = new WebSocket('socket url')
+const socket = new WebSocket('wss://example.com')
 
 socket.addEventListener('open', async (e) => {
     const on = (eventName, callback) => {
@@ -94,7 +192,7 @@ socket.addEventListener('open', async (e) => {
     const off = (eventName) => {
         /* handle unsubscribing logic */
     }
-    const connectionId="..."
+    const connectionId = "user-id"
     const groupCollab = new RealtimeCollabPlugin({
         editor,
         socket: {
@@ -105,28 +203,24 @@ socket.addEventListener('open', async (e) => {
         },
     })
 })
+```
 
-// Pie Socket example
+### PieSocket Example
+
+```ts
 const pieSocket = new PieSocket.default({
     clusterId: 'free.blr2',
-    apiKey: 'api key',
+    apiKey: 'your-api-key',
 })
 const channel = await pieSocket.subscribe('channel-name')
-const send = (name: string, data: Object) => {
-    channel.publish(name, data)
-}
-const on = (name: string, cb: Function) => {
-    channel.listen(name, (data, meta) => {
-        cb(data)
-    })
-}
+
 const socket = {
-    on,
-    send,
+    on: (name: string, cb: Function) => channel.listen(name, (data, meta) => cb(data)),
+    send: (name: string, data: Object) => channel.publish(name, data),
     off: () => {
         /* unsubscribing logic */
     },
-    connectionId:"user id or whatever"
+    connectionId: "user-id"
 }
 
 new RealtimeCollabPlugin({
@@ -135,13 +229,52 @@ new RealtimeCollabPlugin({
 })
 ```
 
-## Config Params
+---
 
-| Field                    | Type                                            | Description                                              | Default              |
-| ------------------------ | ----------------------------------------------- | -------------------------------------------------------- | -------------------- |
-| editor                   | `EditorJS`                                      | The editorJs instance you want to listen to              | `required*`          |
-| socket                   | `Object`                                        | The socket instance (or custom method bingings)          | `required*`          |
-| socketMethodName         | `string`                                        | The event name to use when communicating between sockets | `editorjs-update`    |
-| blockChangeThrottleDelay | `number`                                        | Delay to throttle block changes (ms).                    | `300`                |
-| cursor                   | `{ color: string }`                             | Cursor configuration                                     | `{ color: #0d0c0f }` |
-| overrideStyles           | `{ cursorClass: string; selectedClass:string; pendingDeletionClass: string }` | Class overrides                                          | `{}`                 |
+### Message Types (Advanced)
+
+Internally, data is synced using strongly typed messages that map directly to Editor.js mutations:
+
+- Block added / removed / moved / changed
+
+- Inline selection changes
+
+- Block selection changes
+
+- Pending deletion state
+
+- User disconnect events
+
+You generally **do not need to handle these manually** unless:
+
+- You are proxying messages through a server
+
+- You want to log or transform events
+
+---
+
+### Styling
+
+The plugin injects default styles for:
+
+- Remote cursors
+
+- Inline selections
+
+- Selected blocks
+
+- Pending deletions
+
+You can override any of them via `overrideStyles` or your own CSS.
+
+---
+
+### Gotchas & Notes
+
+- ⚠️ `connectionId` must be stable for a user session
+
+- ⚠️ Clients must all use the same `socketMethodName`
+
+- ✅ Editor content stays consistent even with rapid concurrent edits
+
+- ✅ Self-emitted events are automatically ignored
