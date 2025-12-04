@@ -278,3 +278,20 @@ You can override any of them via `overrideStyles` or your own CSS.
 - ✅ Editor content stays consistent even with rapid concurrent edits
 
 - ✅ Self-emitted events are automatically ignored
+`
+
+```mermaid
+graph TD
+  UserA[User A<br/>Editor.js] -->|Block & Selection Events| PluginA[RealtimeCollabPlugin]
+  PluginA -->|send(MessageData)| SocketA[Socket Adapter]
+  SocketA -->|broadcast| Server[Relay Server]
+
+  Server -->|MessageData| SocketB[Socket Adapter]
+  Server -->|MessageData| SocketC[Socket Adapter]
+
+  SocketB -->|on(MessageData)| PluginB[RealtimeCollabPlugin]
+  SocketC -->|on(MessageData)| PluginC[RealtimeCollabPlugin]
+
+  PluginB -->|Apply Mutations| UserB[User B<br/>Editor.js]
+  PluginC -->|Apply Mutations| UserC[User C<br/>Editor.js]
+```
