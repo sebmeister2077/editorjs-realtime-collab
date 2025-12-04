@@ -42,7 +42,7 @@ const realtimeCollab = new RealtimeCollabPlugin({
 })
 ```
 
-Once instantiated, the plugin **automatically starts listening** for:
+After instantiation, the plugin is **idle** until you explicitly start it. Call `realtimeCollab.listen()` to begin listening for:
 
 - Editor.js block mutations
 
@@ -50,7 +50,7 @@ Once instantiated, the plugin **automatically starts listening** for:
 
 - Incoming socket messages
 
-No extra setup is required.
+Use `realtimeCollab.unlisten()` to stop listening, and check `realtimeCollab.isListening` to inspect the current state.
 
 ## Socket Interface Contract
 
