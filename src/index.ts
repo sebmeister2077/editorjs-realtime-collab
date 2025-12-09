@@ -455,7 +455,7 @@ export default class GroupCollab<SocketMethodName extends string> {
                 // console.log(response)
 
                 if (isSelection) {
-                    const MARGIN_OF_ERROR = 6 //px
+                    const MARGIN_OF_ERROR_IN_PX = 6
                     /**
                      * Ok so for this to work properly i have to check that the
                      * current selection Rect width equals the distance between left and right (IN DOM content ofc)
@@ -500,7 +500,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             case 'user-disconnected': {
                 const { connectionId } = response
                 const cursor = this.getFakeCursor({ connectionId })
-
+                const selection = this.getFakeSelections()
                 cursor?.remove()
                 break
             }
@@ -594,9 +594,9 @@ export default class GroupCollab<SocketMethodName extends string> {
         return cursor
     }
 
-    private getFakeSelections(blockId: string) {
+    private getFakeSelections(blockId?: string) {
         return document.querySelectorAll(
-            `[${this.blockIdAttributeName}='${blockId}'] .${this.EditorCSS.blockContent} [${this.inlineFakeSelectionAttributeName}]`,
+            `[${this.blockIdAttributeName}${blockId ? `='${blockId}'` : ""}] .${this.EditorCSS.blockContent} [${this.inlineFakeSelectionAttributeName}]`,
         )
     }
 
