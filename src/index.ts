@@ -111,7 +111,8 @@ export default class GroupCollab<SocketMethodName extends string> {
     private ignoreEvents: Record<string, Set<Events>> = {}
     private redactorObserver: MutationObserver
     private toolboxObserver: MutationObserver;
-    private handleBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
+    private throttledBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
+    private throttledInlineSelectionChange?: throttle<(e: Event) => void> = undefined
     private localBlockStates: Record<string, Set<'selected' | 'focused' | "deleting">> = {}
     private blockIdAttributeName = 'data-id'
     private inlineFakeCursorAttributeName = 'data-realtime-fake-inline-cursor'
@@ -145,7 +146,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             this.handleToolboxMutation(lastMutation)
         })
 
-        this.initBlockChangeListener()
+        this.setupThrottledListeners()
     }
 
     public get isListening() {
@@ -159,7 +160,7 @@ export default class GroupCollab<SocketMethodName extends string> {
         this.editor.off(this.editorBlockEvent, this.onEditorBlockEvent)
         this.redactorObserver.disconnect()
         this.toolboxObserver.disconnect()
-        document.removeEventListener('selectionchange', this.onInlineSelectionChange)
+        document.removeEventListener('selectionchange', this.throttledInlineSelectionChange!)
         window.removeEventListener("beforeunload", this.onDisconnect, { capture: true })
         this.socket.send(this.socketMethodName, { type: UserDisconnectedType, connectionId: this.socket.connectionId })
 
@@ -191,7 +192,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             })
         else
             console.error("Could not initialize toolbox observer.")
-        document.addEventListener('selectionchange', this.onInlineSelectionChange)
+        document.addEventListener('selectionchange', this.throttledInlineSelectionChange!)
         window.addEventListener("beforeunload", this.onDisconnect, { capture: true })
 
         this._isListening = true
@@ -528,9 +529,9 @@ export default class GroupCollab<SocketMethodName extends string> {
         setTimeout(async () => {
             if (type === 'block-changed') {
                 if (!('index' in otherData) || typeof otherData.index !== 'number') return
-                this.handleBlockChange?.(target, otherData.index ?? 0)
+                this.throttledBlockChange?.(target, otherData.index ?? 0)
                 setTimeout(() => {
-                    this.onInlineSelectionChange(new CustomEvent('selectionchange'))
+                    this.throttledInlineSelectionChange?.(new CustomEvent('selectionchange'))
                 }, 0)
                 return
             }
@@ -556,8 +557,13 @@ export default class GroupCollab<SocketMethodName extends string> {
         }, 0)
     }
 
-    private initBlockChangeListener() {
-        this.handleBlockChange = throttle(this.config.blockChangeThrottleDelay, async (target: BlockAPI, index: number) => {
+    private setupThrottledListeners() {
+        this.throttledInlineSelectionChange = throttle(this.config.blockChangeThrottleDelay, (event: Event) => {
+            if (!this.isListening) return
+
+            this.onInlineSelectionChange(event);
+        })
+        this.throttledBlockChange = throttle(this.config.blockChangeThrottleDelay, async (target: BlockAPI, index: number) => {
             if (!this.isListening) return
             const targetId = target.id
             const savedData = await target.save()

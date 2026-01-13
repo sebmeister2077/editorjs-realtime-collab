@@ -74,7 +74,8 @@ export default class GroupCollab<SocketMethodName extends string> {
     private ignoreEvents;
     private redactorObserver;
     private toolboxObserver;
-    private handleBlockChange?;
+    private throttledBlockChange?;
+    private throttledInlineSelectionChange?;
     private localBlockStates;
     private blockIdAttributeName;
     private inlineFakeCursorAttributeName;
@@ -98,7 +99,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private onDisconnect;
     private onReceiveChange;
     private onEditorBlockEvent;
-    private initBlockChangeListener;
+    private initBlockAndSelectionChangeListeners;
     private getFakeCursor;
     private createFakeCursor;
     private getFakeSelections;
