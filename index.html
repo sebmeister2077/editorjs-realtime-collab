@@ -3,10 +3,11 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <script src="https://unpkg.com/piesocket-js@5"></script>
+        <!-- <script src="https://unpkg.com/piesocket-js@5"></script> -->
         <script src="https://cdn.jsdelivr.net/npm/@editorjs/editorjs@2.28.2/dist/editorjs.umd.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/@editorjs/header@2.8.1/dist/header.umd.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/@editorjs/table@2.3.0/dist/table.umd.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@editorjs/paragraph@2.11.7/dist/paragraph.umd.min.js"></script>
         <script src="./dist/bundle.js"></script>
         <script
             src="https://code.jquery.com/jquery-3.7.0.min.js"
@@ -34,7 +35,26 @@
     </head>
     <body>
         <div id="holder"></div>
-        <script>
+        <script type="module">
+            import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js'
+            import {
+                getAuth,
+                signInAnonymously,
+                onAuthStateChanged,
+                inMemoryPersistence,
+            } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-auth.js'
+            import {
+                getDatabase,
+                ref,
+                set,
+                onValue,
+                push,
+                onChildAdded,
+                orderByChild,
+                query,
+                startAt,
+            } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-database.js'
+            import { getAnalytics } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-analytics.js'
             const dataLocation = 'editorJs-default-data-realtime'
             const defaultBlocks = [
                 {
@@ -54,39 +74,65 @@
             ]
             const sessionData = sessionStorage.getItem(dataLocation)
             ;(async () => {
-                const { default: config } = await import('./config.json', { with: { type: 'json' } })
-                const pieSocket = new PieSocket.default({
-                    clusterId: config.clusterId,
-                    apiKey: config.apiKey,
-                    // notifySelf: true,
-                })
+                const { default: firebaseConfig } = await import('./config.json', { with: { type: 'json' } })
 
-                const channel = await pieSocket.subscribe('test-lol')
-                console.log('🚀 ~ ; ~ channel:', channel)
-                const socket = channel.connection
-                if (socket instanceof WebSocket) {
-                    try {
-                        await new Promise((res, rej) => {
-                            const inactiveAccountError = '{"error":"PieSocket account in inactive."}'
-                            socket.addEventListener('message', (e) => {
-                                if (e.data == inactiveAccountError) {
-                                    toastr.error('Socket connection seems to be down')
-                                    rej()
-                                }
-                                res()
-                            })
-                            setTimeout(res, 1000)
+                const app = initializeApp(firebaseConfig)
+                const auth = getAuth(app)
+                auth.setPersistence(inMemoryPersistence)
+                let user = null
+                onAuthStateChanged(auth, (u) => {
+                    user = u
+                })
+                try {
+                    await signInAnonymously(auth)
+                } catch (err) {
+                    const errorCode = error.code
+                    const errorMessage = error.message
+                    console.error('Error signing in anonymously', errorCode, errorMessage)
+                }
+                // const analytics = getAnalytics(app);
+
+                let lastSeenTimestamp = Date.now()
+                const subscribers = new Map()
+                const userId = user ? user.uid : crypto.randomUUID()
+                const db = getDatabase(app)
+                const messagesAddRef = ref(db, 'messages')
+                const messagesRef = query(ref(db, 'messages'), orderByChild('timestamp'), startAt(lastSeenTimestamp + 1))
+
+                const socket = {
+                    on: (name, cb) => {
+                        const subscriber = onChildAdded(messagesRef, (snapshot) => {
+                            const msg = snapshot.val()
+
+                            if (msg.senderId === userId) return //ignore own messages
+                            if (msg.eventName !== name) return //ignore other events for this listener
+
+                            const deserializedPayload = deserializeArrays(msg.payload)
+                            cb(deserializedPayload)
                         })
-                    } catch {
-                        return
-                    }
+                        const existingSubscribers = subscribers.get(name) || []
+                        existingSubscribers.push(subscriber)
+                        subscribers.set(name, existingSubscribers)
+                    },
+                    send: (name, data = null) => {
+                        console.log('sending', name, data)
+                        const serializedData = serializeArrays(data)
+                        push(messagesAddRef, { senderId: userId, timestamp: Date.now(), eventName: name, payload: serializedData })
+                    },
+                    off: (name) => {
+                        const existingSubscribers = subscribers.get(name) || []
+                        existingSubscribers.forEach((unsubscribe) => {
+                            unsubscribe() // Detach the listener
+                        })
+                        subscribers.delete(name)
+                    },
                 }
 
-                console.log('socket subscribed')
+                // console.log('socket subscribed')
 
-                console.log(channel.members)
                 let timeout = null
 
+                const isOpera = navigator.userAgentData.brands.some((brand) => brand.brand.toLowerCase().includes('opera'))
                 const askTimeout = 3000
                 toastr.options = {
                     progressBar: true,
@@ -99,12 +145,14 @@
                 const receiveEvent = 'receive-all-data'
 
                 let isEditorInstantiated = false
-                channel.listen(receiveEvent, (data) => {
+                socket.on(receiveEvent, (data) => {
                     if (timeout) clearTimeout(timeout)
                     initEditorWithOrWithoutData(data)
                 })
 
-                channel.publish(askEvent)
+                setTimeout(() => {
+                    socket.send(askEvent)
+                }, 50)
 
                 timeout = setTimeout(initEditorWithOrWithoutData, askTimeout)
                 async function initEditorWithOrWithoutData(otherUserData) {
@@ -134,6 +182,12 @@
                         tools: {
                             header: Header,
                             table: Table,
+                            paragraph: {
+                                class: self.Paragraph,
+                                config: {
+                                    preserveBlank: true,
+                                },
+                            },
                         },
                         onChange(api) {
                             api.saver.save().then((data) => {
@@ -146,37 +200,84 @@
 
                     await editor.isReady
                     //sync editor with other online users
-                    channel.listen(askEvent, () => {
+                    socket.on(askEvent, () => {
                         toastr.info('saving and sharing data to newly connected user')
                         editor.save().then((data) => {
-                            channel.publish(receiveEvent, data)
+                            socket.send(receiveEvent, data)
                         })
                     })
-                    const send = (name, data) => {
-                        console.log('🚀 ~ file: local-testing.html:76 ~ send ~ data:', data)
 
-                        channel.publish(name, data)
-                    }
-                    const on = (name, cb) => {
-                        channel.listen(name, (data, meta) => {
-                            console.log('Data and meta:', data, meta)
-                            cb(data)
-                        })
-                    }
                     const colors = ['red', 'green', 'blue']
                     const groupCollab = new RealtimeCollabPlugin({
                         editor,
                         socket: {
-                            send,
-                            on,
-                            off: () => {},
+                            send: socket.send,
+                            on: socket.on,
+                            off: socket.off,
+                            connectionId: userId,
                         },
+                        // blockChangeThrottleDelay: 1400,
                         cursor: { color: colors[Math.floor(Math.random() * colors.length)] },
+                        // blockChangeThrottleDelay: 3000,
                     })
 
                     groupCollab.listen()
                 }
             })()
+
+            // for compatibility with the document based lists
+            // when list is empty, it is not saved at all, so we need to serialize arrays manually
+            const ARRAY_MARKER = '__type'
+            const ARRAY_TYPE = 'array'
+            function serializeArrays(value) {
+                if (Array.isArray(value)) {
+                    const items = {}
+
+                    value.forEach((item, index) => {
+                        items[index] = serializeArrays(item)
+                    })
+
+                    return {
+                        [ARRAY_MARKER]: ARRAY_TYPE,
+                        items,
+                    }
+                }
+
+                if (value !== null && typeof value === 'object') {
+                    const result = {}
+                    for (const key in value) {
+                        result[key] = serializeArrays(value[key])
+                    }
+                    return result
+                }
+
+                // primitives
+                return value
+            }
+
+            function deserializeArrays(value) {
+                if (value && typeof value === 'object' && value[ARRAY_MARKER] === ARRAY_TYPE && value.items) {
+                    const array = []
+
+                    Object.keys(value.items)
+                        .sort((a, b) => Number(a) - Number(b))
+                        .forEach((key) => {
+                            array[Number(key)] = deserializeArrays(value.items[key])
+                        })
+
+                    return array
+                }
+
+                if (value !== null && typeof value === 'object') {
+                    const result = {}
+                    for (const key in value) {
+                        result[key] = deserializeArrays(value[key])
+                    }
+                    return result
+                }
+
+                return value
+            }
         </script>
     </body>
 </html>

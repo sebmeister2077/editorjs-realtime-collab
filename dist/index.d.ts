@@ -99,7 +99,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private onDisconnect;
     private onReceiveChange;
     private onEditorBlockEvent;
-    private initBlockAndSelectionChangeListeners;
+    private setupThrottledListeners;
     private getFakeCursor;
     private createFakeCursor;
     private getFakeSelections;
