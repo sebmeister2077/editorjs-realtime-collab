@@ -1,0 +1,33 @@
+  body {
+      background-color: #1f2937;
+  }
+
+  #holder {
+      background-color: #f9fafb;
+      border-radius: 12px;
+  }
+
+  .throttle {
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      background-color: #25a6a2;
+      margin-inline: auto;
+      padding: 8px;
+      gap: 12px;
+      border-radius: 14px;
+      -webkit-border-radius: 14px;
+      -moz-border-radius: 14px;
+      -ms-border-radius: 14px;
+      -o-border-radius: 14px;
+  }
+
+  .throttle button {
+      margin-left: 8px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: none;
+      background-color: #3b82f6;
+      color: white;
+      cursor: pointer;
+  }

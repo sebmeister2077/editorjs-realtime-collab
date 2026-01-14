@@ -1,6 +1,6 @@
 {
     "name": "editorjs-realtime-collab",
-    "version": "0.3.2",
+    "version": "0.3.3",
     "description": "Concurrent real-time plugin for EditorJS",
     "scripts": {
         "build": "webpack --mode production",
