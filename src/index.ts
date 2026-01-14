@@ -473,6 +473,12 @@ export default class GroupCollab<SocketMethodName extends string> {
                     // }
                 } else {
                     if (!cursor) cursor = this.createFakeCursor(connectionId)
+                    else {
+                        // reset animation state
+                        cursor.style.animation = 'none'
+                        cursor.offsetHeight // trigger reflow
+                        cursor.style.animation = ''
+                    }
                     const rect = rects[0]
                     //* Note if element is not found try without nth-child
                     const selectedElement = document.querySelector(elementXPath)

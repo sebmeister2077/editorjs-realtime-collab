@@ -37,9 +37,15 @@
 .cdx-realtime-inline-cursor {
     position: absolute;
     background-color: var(--realtime-inline-cursor-color, #0d0c0f);
-    width: 1px;
+    width: 2px;
     height: 1ch;
-    animation: cursor-blink 0.6s infinite alternate ease-in-out;
+    transform: translateX(-50%);
+    animation: cursor-blink 0.6s 1s infinite alternate ease-in-out;
+    -webkit-animation: cursor-blink 0.6s 1s infinite alternate ease-in-out;
+    -webkit-transform: translateX(-50%);
+    -moz-transform: translateX(-50%);
+    -ms-transform: translateX(-50%);
+    -o-transform: translateX(-50%);
 }
 
 

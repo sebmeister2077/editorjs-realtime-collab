@@ -3,12 +3,10 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <!-- <script src="https://unpkg.com/piesocket-js@5"></script> -->
         <script src="https://cdn.jsdelivr.net/npm/@editorjs/editorjs@2.28.2/dist/editorjs.umd.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/@editorjs/header@2.8.1/dist/header.umd.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/@editorjs/table@2.3.0/dist/table.umd.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/@editorjs/paragraph@2.11.7/dist/paragraph.umd.min.js"></script>
-        <script src="./dist/bundle.js"></script>
+        <script src="./dist/dev-build.js"></script>
         <script
             src="https://code.jquery.com/jquery-3.7.0.min.js"
             integrity="sha256-2Pmvv0kuTBOenSvLm6bvfBSSHrUJ+3A7x6P5Ebd07/g="
@@ -20,21 +18,22 @@
             integrity="sha256-R91pD48xW+oHbpJYGn5xR0Q7tMhH4xOrWn1QqMRINtA="
             crossorigin="anonymous"
         />
+        <!-- <script src="https://unpkg.com/piesocket-js@5"></script> -->
         <script src="https://cdn.jsdelivr.net/npm/toastr@2.1.4/toastr.min.js"></script>
-        <title>EditorJS realtime collab DEMO</title>
-        <style>
-            body {
-                background-color: #1f2937;
-            }
+        <script src="https://cdn.jsdelivr.net/npm/@editorjs/paragraph@2.11.7/dist/paragraph.umd.min.js"></script>
 
-            #holder {
-                background-color: #f9fafb;
-                border-radius: 12px;
-            }
-        </style>
+        <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/6.0.1/signalr.js"></script> -->
+        <title>EditorJS realtime collab DEMO</title>
+        <link rel="stylesheet" href="./local-testing.css" />
     </head>
     <body>
         <div id="holder"></div>
+
+        <div class="throttle">
+            <label for="throttleDelay">Block change throttle delay (ms): </label>
+            <input type="number" id="throttleDelay" value="300" step="100" min="0" />
+            <button id="applyThrottle">Apply</button>
+        </div>
         <script type="module">
             import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js'
             import {
@@ -73,6 +72,8 @@
                 },
             ]
             const sessionData = sessionStorage.getItem(dataLocation)
+            let throttleTimeoutValue = Number(document.getElementById('throttleDelay').value) ?? 300
+
             ;(async () => {
                 const { default: firebaseConfig } = await import('./config.json', { with: { type: 'json' } })
 
@@ -115,7 +116,6 @@
                         subscribers.set(name, existingSubscribers)
                     },
                     send: (name, data = null) => {
-                        console.log('sending', name, data)
                         const serializedData = serializeArrays(data)
                         push(messagesAddRef, { senderId: userId, timestamp: Date.now(), eventName: name, payload: serializedData })
                     },
@@ -133,7 +133,7 @@
                 let timeout = null
 
                 const isOpera = navigator.userAgentData.brands.some((brand) => brand.brand.toLowerCase().includes('opera'))
-                const askTimeout = 3000
+                const askTimeout = isOpera ? 0 : 3000
                 toastr.options = {
                     progressBar: true,
                     preventDuplicates: true,
@@ -145,14 +145,15 @@
                 const receiveEvent = 'receive-all-data'
 
                 let isEditorInstantiated = false
-                socket.on(receiveEvent, (data) => {
+                socket.on(receiveEvent, (res) => {
                     if (timeout) clearTimeout(timeout)
-                    initEditorWithOrWithoutData(data)
+                    throttleTimeoutValue = res.throttleTimeout ?? 300
+                    initEditorWithOrWithoutData(res.data)
                 })
 
                 setTimeout(() => {
                     socket.send(askEvent)
-                }, 50)
+                }, 200)
 
                 timeout = setTimeout(initEditorWithOrWithoutData, askTimeout)
                 async function initEditorWithOrWithoutData(otherUserData) {
@@ -203,25 +204,54 @@
                     socket.on(askEvent, () => {
                         toastr.info('saving and sharing data to newly connected user')
                         editor.save().then((data) => {
-                            socket.send(receiveEvent, data)
+                            socket.send(receiveEvent, { data, throttleTimeoutValue })
                         })
                     })
-
                     const colors = ['red', 'green', 'blue']
-                    const groupCollab = new RealtimeCollabPlugin({
-                        editor,
-                        socket: {
-                            send: socket.send,
-                            on: socket.on,
-                            off: socket.off,
-                            connectionId: userId,
-                        },
-                        // blockChangeThrottleDelay: 1400,
-                        cursor: { color: colors[Math.floor(Math.random() * colors.length)] },
-                        // blockChangeThrottleDelay: 3000,
-                    })
+
+                    let groupCollab = setupPlugin()
 
                     groupCollab.listen()
+                    document.getElementById('applyThrottle').addEventListener('click', (event) => {
+                        const newValue = Number(document.getElementById('throttleDelay').value)
+                        if (newValue == throttleTimeoutValue) return
+                        throttleTimeoutValue = newValue
+
+                        groupCollab.unlisten()
+
+                        socket.send('throttle-timeout-change', { newTimeout: throttleTimeoutValue })
+                        groupCollab = setupPlugin()
+
+                        groupCollab.listen()
+                    })
+
+                    socket.on('throttle-timeout-change', (data) => {
+                        const newTimeout = data.newTimeout
+                        if (newTimeout == throttleTimeoutValue || typeof throttleTimeoutValue !== 'number') return
+                        throttleTimeoutValue = newTimeout
+
+                        groupCollab.unlisten()
+
+                        toastr.info(`Throttle timeout changed to ${throttleTimeoutValue}ms by another user`)
+                        document.getElementById('throttleDelay').value = String(throttleTimeoutValue)
+                        groupCollab = setupPlugin()
+
+                        groupCollab.listen()
+                    })
+
+                    function setupPlugin() {
+                        return new RealtimeCollabPlugin({
+                            editor,
+                            socket: {
+                                send: socket.send,
+                                on: socket.on,
+                                off: socket.off,
+                                connectionId: userId,
+                            },
+                            blockChangeThrottleDelay: throttleTimeoutValue,
+                            cursor: { color: colors[Math.floor(Math.random() * colors.length)] },
+                        })
+                    }
                 }
             })()
 
