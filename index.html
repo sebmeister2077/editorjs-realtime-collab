@@ -41,17 +41,21 @@
                 signInAnonymously,
                 onAuthStateChanged,
                 inMemoryPersistence,
+                browserSessionPersistence,
             } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-auth.js'
             import {
                 getDatabase,
                 ref,
                 set,
                 onValue,
+                get,
                 push,
                 onChildAdded,
                 orderByChild,
                 query,
                 startAt,
+                endAt,
+                onDisconnect,
             } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-database.js'
             import { getAnalytics } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-analytics.js'
             const dataLocation = 'editorJs-default-data-realtime'
@@ -79,34 +83,73 @@
 
                 const app = initializeApp(firebaseConfig)
                 const auth = getAuth(app)
-                auth.setPersistence(inMemoryPersistence)
+                auth.setPersistence(browserSessionPersistence)
                 let user = null
-                onAuthStateChanged(auth, (u) => {
-                    user = u
+                let isInitial = true
+                const authPromise = new Promise((resolve) => {
+                    const unsubscribe = onAuthStateChanged(auth, (u) => {
+                        user = u
+                        if (!user && isInitial) {
+                            isInitial = false
+                            return
+                        }
+                        resolve()
+                        unsubscribe()
+                    })
                 })
                 try {
                     await signInAnonymously(auth)
+                    await authPromise
+                    console.log('Signed in anonymously as user', user.uid)
                 } catch (err) {
                     const errorCode = error.code
                     const errorMessage = error.message
                     console.error('Error signing in anonymously', errorCode, errorMessage)
                 }
-                // const analytics = getAnalytics(app);
+                const analytics = getAnalytics(app)
 
-                let lastSeenTimestamp = Date.now()
+                let lastSeenMessageTimestamp = Date.now()
                 const subscribers = new Map()
                 const userId = user ? user.uid : crypto.randomUUID()
                 const db = getDatabase(app)
+                // cleanupOldMessages(db)
                 const messagesAddRef = ref(db, 'messages')
-                const messagesRef = query(ref(db, 'messages'), orderByChild('timestamp'), startAt(lastSeenTimestamp + 1))
+                const messagesRef = query(ref(db, 'messages'), orderByChild('timestamp'), startAt(lastSeenMessageTimestamp + 1))
+                const presenceRef = ref(db, `presence/${userId}`)
+                const usersPrecenseRef = query(ref(db, 'presence'), orderByChild('lastSeen'), startAt(Date.now() - 1000 * 60 * 1)) // last 1 minutes
+                onDisconnect(presenceRef).remove()
+                set(presenceRef, { lastSeen: Date.now() })
+                setInterval(() => {
+                    set(presenceRef, { lastSeen: Date.now() })
+                }, 1000 * 30) // every 30 seconds
 
+                const connectedRef = ref(db, '.info/connected')
+                let hasEverDisconnected = false
+                onValue(connectedRef, (snap) => {
+                    if (snap.val() === true) {
+                        if (hasEverDisconnected) toastr.info('Connected to socket')
+                    } else {
+                        if (hasEverDisconnected) toastr.info('Disconnected from socket')
+                        hasEverDisconnected = true
+                    }
+                })
+                let onlineUsers = []
+                onValue(usersPrecenseRef, (snapshot) => {
+                    const newOnlineUsers = []
+                    snapshot.forEach((childSnapshot) => {
+                        newOnlineUsers.push(childSnapshot.key)
+                    })
+                    if (newOnlineUsers.length === onlineUsers.length) return
+                    onlineUsers = newOnlineUsers
+                    toastr.info('Online users:' + onlineUsers.length)
+                })
                 const socket = {
                     on: (name, cb) => {
                         const subscriber = onChildAdded(messagesRef, (snapshot) => {
                             const msg = snapshot.val()
 
-                            if (msg.senderId === userId) return //ignore own messages
-                            if (msg.eventName !== name) return //ignore other events for this listener
+                            if (msg.senderId === userId) return // ignore own messages
+                            if (msg.eventName !== name) return // ignore other events for this listener
 
                             const deserializedPayload = deserializeArrays(msg.payload)
                             cb(deserializedPayload)
@@ -117,7 +160,15 @@
                     },
                     send: (name, data = null) => {
                         const serializedData = serializeArrays(data)
-                        push(messagesAddRef, { senderId: userId, timestamp: Date.now(), eventName: name, payload: serializedData })
+                        const dbMessage = {
+                            senderId: userId,
+                            timestamp: Date.now(),
+                            eventName: name,
+                            payload: serializedData,
+                        }
+                        push(messagesAddRef, dbMessage).catch((error) => {
+                            console.log('Error sending message', error, dbMessage)
+                        })
                     },
                     off: (name) => {
                         const existingSubscribers = subscribers.get(name) || []
@@ -133,7 +184,7 @@
                 let timeout = null
 
                 const isOpera = navigator.userAgentData.brands.some((brand) => brand.brand.toLowerCase().includes('opera'))
-                const askTimeout = isOpera ? 0 : 3000
+                const askTimeout = isOpera ? 500 : 3000
                 toastr.options = {
                     progressBar: true,
                     preventDuplicates: true,
@@ -164,7 +215,7 @@
                         preventDuplicates: true,
                     }
                     if (!otherUserData) {
-                        toastr.warning('No more online users')
+                        // toastr.warning('No more online users')
                         toastr.success('Using default data')
                     } else {
                         toastr.success('Received data')
@@ -307,6 +358,21 @@
                 }
 
                 return value
+            }
+
+            function cleanupOldMessages(db) {
+                const cutoff = Date.now() - 1000 * 60 * 60 * 24 // 1 day ago
+                const oldMessagesQuery = query(ref(db, 'messages'), orderByChild('timestamp'), endAt(cutoff))
+                const listener = onValue(oldMessagesQuery, (snapshot) => {
+                    listener()
+                    console.log('Cleaning up old messages...')
+                    console.log(snapshot.size + ' old messages found')
+                    snapshot.forEach((childSnapshot) => {
+                        console.log(childSnapshot)
+                        set(childSnapshot.ref, null)
+                        // childSnapshot.ref.remove()
+                    })
+                })
             }
         </script>
     </body>
