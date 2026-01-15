@@ -8,13 +8,15 @@ import EditorJS, {
 } from '@editorjs/editorjs'
 import { type SavedData } from '@editorjs/editorjs/types/data-formats/block-data'
 import { type PickFromConditionalType, type MakeConditionalType } from './UtilityTypes'
-import { throttle } from 'throttle-debounce'
+import { throttle, debounce } from 'throttle-debounce'
 import './index.css'
 
 const UserInlineSelectionChangeType = 'inline-selection-change'
 const UserBlockSelectionChangeType = 'block-selection-change'
 const UserBlockDeletionChangeType = 'block-deletion-change'
 const UserDisconnectedType = 'user-disconnected'
+const BlockLockedType = 'block-locked'
+const BlockUnlockedType = 'block-unlocked'
 
 export type GroupCollabConfigOptions<SocketMethodName extends string> = {
     editor: EditorJS
@@ -79,6 +81,8 @@ export type MessageData =
     | MakeConditionalType<{ connectionId: string }, typeof UserDisconnectedType>
     | MakeConditionalType<{ blockId: string; isDeletePending: boolean }, typeof UserBlockDeletionChangeType>
     | MakeConditionalType<{ blockId: string; isSelected: boolean }, typeof UserBlockSelectionChangeType>
+    | MakeConditionalType<LockedBlock, typeof BlockLockedType>
+    | MakeConditionalType<LockedBlock, typeof BlockUnlockedType>
 type Rect = Pick<DOMRect, 'top' | 'left' | 'width'>
 type PossibleEventDetails = {
     target: BlockAPI
@@ -90,8 +94,9 @@ type PossibleEventDetails = {
         | MakeConditionalType<{ fromIndex: number; toIndex: number }, typeof BlockMovedMutationType>
     )
 
+type LockedBlock = { blockId: string; connectionId: string }
 type EditorEvents = keyof BlockMutationEventMap
-type Events = EditorEvents | typeof UserInlineSelectionChangeType | typeof UserBlockSelectionChangeType | typeof UserBlockDeletionChangeType
+type Events = EditorEvents | typeof UserInlineSelectionChangeType | typeof UserBlockSelectionChangeType | typeof UserBlockDeletionChangeType | typeof BlockLockedType | typeof BlockUnlockedType
 
 export type INeededSocketFields<SocketMethodName extends string> = {
     send(socketMethod: SocketMethodName, data: MessageData): void
@@ -107,6 +112,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private editorBlockEvent = 'block changed'
     private editorDomChangedEvent = 'redactor dom changed' // this might need more investigation
     private _isListening = false
+    private _lockedBlocks: LockedBlock[] = []
     // events to ignore until next render
     private ignoreEvents: Record<string, Set<Events>> = {}
     private redactorObserver: MutationObserver
@@ -151,6 +157,16 @@ export default class GroupCollab<SocketMethodName extends string> {
 
     public get isListening() {
         return this._isListening
+    }
+
+    public get lockedBlocks(): LockedBlock[] {
+        return this._lockedBlocks.map(b => ({ ...b }))
+    }
+
+    public set lockedBlocks(value: LockedBlock[]) {
+        const oldLockedBlocks = this._lockedBlocks
+        this._lockedBlocks = value.map(b => ({ ...b }))
+        this.renderLockedBlocks(oldLockedBlocks, this._lockedBlocks)
     }
     /**
      * Remove event listeners on socket and editor
@@ -509,7 +525,22 @@ export default class GroupCollab<SocketMethodName extends string> {
                 const cursor = this.getFakeCursor({ connectionId })
                 const selection = this.getFakeSelections()
                 cursor?.remove()
+                this.lockedBlocks = this.lockedBlocks.filter(b => b.connectionId !== connectionId)
                 break
+            }
+
+            case BlockLockedType: {
+                const { blockId, connectionId } = response
+                const alreadyLocked = this.lockedBlocks.some(b => b.blockId === blockId)
+                if (alreadyLocked) break;
+                this.lockedBlocks = [...this.lockedBlocks, { blockId, connectionId }]
+                break;
+            }
+
+            case BlockUnlockedType: {
+                const { blockId, connectionId } = response
+                this.lockedBlocks = this.lockedBlocks.filter(b => !(b.blockId === blockId && b.connectionId === connectionId))
+                break;
             }
 
             default: {
@@ -530,6 +561,9 @@ export default class GroupCollab<SocketMethodName extends string> {
         const targetId = target.id
 
         if (this.ignoreEvents[targetId]?.has(type)) return
+
+        const isBlockLocked = this.lockedBlocks.some(b => b.blockId === targetId && b.connectionId !== this.socket.connectionId)
+        if (isBlockLocked) return
 
         //save after dom changes have been propagated to the necessary tools
         setTimeout(async () => {
@@ -653,6 +687,9 @@ export default class GroupCollab<SocketMethodName extends string> {
         const redactor = document.querySelector(`.${this.EditorCSS.editorRedactor}`)
         if (!(redactor instanceof HTMLElement)) return null
         return redactor
+    }
+
+    private renderLockedBlocks(oldLockedBlocks: LockedBlock[], newLockedBlocks: LockedBlock[]) {
     }
 
     private getContentAndBlockIdFromNode(node: Node): { contentElement: HTMLElement; blockId: string } | null {
