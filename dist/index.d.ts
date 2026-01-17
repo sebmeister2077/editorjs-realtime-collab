@@ -90,7 +90,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private editorStyleElement;
     private throttledBlockChange?;
     private throttledInlineSelectionChange?;
-    private debouncedBlockUnlocking?;
+    private _debouncedBlockUnlockingsMap;
     private localBlockStates;
     private editorBlockEvent;
     private editorDomChangedEvent;
@@ -119,6 +119,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private onReceiveChange;
     private onEditorBlockEvent;
     private setupThrottledListeners;
+    private debouncedBlockUnlocking;
     private getFakeCursor;
     private createFakeCursor;
     private getFakeSelections;

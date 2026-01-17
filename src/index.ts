@@ -133,7 +133,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private editorStyleElement: HTMLStyleElement;
     private throttledBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
     private throttledInlineSelectionChange?: throttle<(e: Event) => void> = undefined
-    private debouncedBlockUnlocking?: debounce<(blockId: string, connectionId: string) => void> = undefined;
+    private _debouncedBlockUnlockingsMap: Record<string, debounce<(blockId: string, connectionId: string) => void>> = {};
     private localBlockStates: Record<string, Set<'selected' | 'focused' | "deleting">> = {}
 
     private editorBlockEvent = 'block changed'
@@ -613,14 +613,14 @@ export default class GroupCollab<SocketMethodName extends string> {
         const isBlockLocked = this.lockedBlocks.some(b => b.blockId === targetId && b.connectionId !== this.socket.connectionId)
         if (isBlockLocked) return
 
-        // if (type === 'block-changed') {
-        //     if (this._currentEditorLockingBlockId)
-        //         this.debouncedBlockUnlocking?.(targetId, this.socket.connectionId)
-        //     else {
-        //         this._currentEditorLockingBlockId = targetId;
-        //         this.socket.send(this.socketMethodName, { type: BlockLockedType, blockId: targetId, connectionId: this.socket.connectionId })
-        //     }
-        // }
+        if (type === 'block-changed') {
+            if (this._currentEditorLockingBlockId)
+                this.debouncedBlockUnlocking(targetId, this.socket.connectionId)
+            else {
+                this._currentEditorLockingBlockId = targetId;
+                this.socket.send(this.socketMethodName, { type: BlockLockedType, blockId: targetId, connectionId: this.socket.connectionId })
+            }
+        }
 
         //save after dom changes have been propagated to the necessary tools
         setTimeout(async () => {
@@ -655,12 +655,6 @@ export default class GroupCollab<SocketMethodName extends string> {
     }
 
     private setupThrottledListeners() {
-        //TODO refactor this with Record<timeoutToken, listener> maybe instead? so even if you change which block you are changin now, the old block will be unlocked
-        this.debouncedBlockUnlocking = debounce(this.config.blockLockDebounceTime, (blockId, connectionId) => {
-            this.socket.send(this.socketMethodName, { type: BlockUnlockedType, blockId, connectionId })
-            this._currentEditorLockingBlockId = null;
-        })
-
         this.throttledInlineSelectionChange = throttle(this.config.blockChangeThrottleDelay, (event: Event) => {
             if (!this.isListening) return
 
@@ -685,6 +679,27 @@ export default class GroupCollab<SocketMethodName extends string> {
             this.addBlockToIgnoreListUntilNextRender(targetId, 'block-changed')
         })
     }
+
+    private debouncedBlockUnlocking(blockId: string, connectionId: string) {
+        const debouncedFunc = this._debouncedBlockUnlockingsMap?.[blockId];
+        if (debouncedFunc) {
+            debouncedFunc(blockId, connectionId);
+            return;
+        }
+        const newDebouncedFunc = debounce(this.config.blockLockDebounceTime, (bId: string, connId: string) => {
+            this.socket.send(this.socketMethodName, { type: BlockUnlockedType, blockId: bId, connectionId: connId })
+            if (this.currentLockedBlockId === bId)
+                this._currentEditorLockingBlockId = null;
+            delete this._debouncedBlockUnlockingsMap?.[bId];
+        });
+        this._debouncedBlockUnlockingsMap = {
+            ...(this._debouncedBlockUnlockingsMap),
+            [blockId]: newDebouncedFunc
+        }
+        newDebouncedFunc(blockId, connectionId);
+        
+    }
+
 
     private getFakeCursor({ blockId, connectionId }: Partial<Record<"blockId" | "connectionId", string>>): HTMLElement | null {
         if (!blockId && !connectionId) return null
