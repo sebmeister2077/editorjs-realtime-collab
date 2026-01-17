@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
@@ -113,10 +113,16 @@
                 const userId = user ? user.uid : crypto.randomUUID()
                 const db = getDatabase(app)
                 // cleanupOldMessages(db)
-                const messagesAddRef = ref(db, 'messages')
-                const messagesRef = query(ref(db, 'messages'), orderByChild('timestamp'), startAt(lastSeenMessageTimestamp + 1))
-                const presenceRef = ref(db, `presence/${userId}`)
-                const usersPrecenseRef = query(ref(db, 'presence'), orderByChild('lastSeen'), startAt(Date.now() - 1000 * 60 * 1)) // last 1 minutes
+
+                const envPrefix = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'dev/' : 'prod/'
+                const messagesAddRef = ref(db, envPrefix + 'messages')
+                const messagesRef = query(ref(db, envPrefix + 'messages'), orderByChild('timestamp'), startAt(lastSeenMessageTimestamp + 1))
+                const presenceRef = ref(db, `${envPrefix}presence/${userId}`)
+                const usersPrecenseRef = query(
+                    ref(db, envPrefix + 'presence'),
+                    orderByChild('lastSeen'),
+                    startAt(Date.now() - 1000 * 60 * 1),
+                ) // last 1 minutes
                 onDisconnect(presenceRef).remove()
                 set(presenceRef, { lastSeen: Date.now() })
                 setInterval(() => {
@@ -362,7 +368,7 @@
 
             function cleanupOldMessages(db) {
                 const cutoff = Date.now() - 1000 * 60 * 60 * 24 // 1 day ago
-                const oldMessagesQuery = query(ref(db, 'messages'), orderByChild('timestamp'), endAt(cutoff))
+                const oldMessagesQuery = query(ref(db, envPrefix + 'messages'), orderByChild('timestamp'), endAt(cutoff))
                 const listener = onValue(oldMessagesQuery, (snapshot) => {
                     listener()
                     console.log('Cleaning up old messages...')
