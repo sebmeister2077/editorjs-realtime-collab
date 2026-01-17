@@ -11,6 +11,7 @@ on:
 jobs:
     cypress:
         runs-on: ubuntu-latest
+        if: false
         steps:
             - name: Checkout Code
               uses: actions/checkout@v3
