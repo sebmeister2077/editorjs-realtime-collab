@@ -34,8 +34,18 @@ type LocalConfig = {
      * @default 300
      */
     blockChangeThrottleDelay: number
+    /**
+     * Time to debounce block locking. Value is in ms
+     * @default 1500
+     */
+    blockLockDebounceTime: number
     cursor?: { color?: string }
-    overrideStyles?: { cursorClass?: string; selectedClass?: string, pendingDeletionClass?: string }
+    overrideStyles?: {
+        cursorClass?: string;
+        selectedClass?: string,
+        pendingDeletionClass?: string,
+        lockedBlockClass?: string
+    }
 }
 
 export type MessageData =
@@ -106,24 +116,31 @@ export type INeededSocketFields<SocketMethodName extends string> = {
 }
 
 export default class GroupCollab<SocketMethodName extends string> {
+    // Config
     private editor: EditorJS
     private socket: INeededSocketFields<SocketMethodName>
     private socketMethodName: SocketMethodName
-    private editorBlockEvent = 'block changed'
-    private editorDomChangedEvent = 'redactor dom changed' // this might need more investigation
+    private config: LocalConfig
+
+
     private _isListening = false
+    private _currentEditorLockingBlockId: string | null = null;
     private _lockedBlocks: LockedBlock[] = []
     // events to ignore until next render
     private ignoreEvents: Record<string, Set<Events>> = {}
     private redactorObserver: MutationObserver
     private toolboxObserver: MutationObserver;
+    private editorStyleElement: HTMLStyleElement;
     private throttledBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
     private throttledInlineSelectionChange?: throttle<(e: Event) => void> = undefined
+    private debouncedBlockUnlocking?: debounce<(blockId: string, connectionId: string) => void> = undefined;
     private localBlockStates: Record<string, Set<'selected' | 'focused' | "deleting">> = {}
+
+    private editorBlockEvent = 'block changed'
+    private editorDomChangedEvent = 'redactor dom changed' // this might need more investigation before any usage
     private blockIdAttributeName = 'data-id'
     private inlineFakeCursorAttributeName = 'data-realtime-fake-inline-cursor'
     private inlineFakeSelectionAttributeName = 'data-realtime-fake-inline-selection'
-    private config: LocalConfig
     public constructor({ editor, socket, socketMethodName, ...config }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
         this.socket = socket
@@ -135,6 +152,7 @@ export default class GroupCollab<SocketMethodName extends string> {
 
         const defaultConfig: LocalConfig = {
             blockChangeThrottleDelay: 300,
+            blockLockDebounceTime: 1500,
         }
         this.config = {
             ...defaultConfig,
@@ -152,6 +170,8 @@ export default class GroupCollab<SocketMethodName extends string> {
             this.handleToolboxMutation(lastMutation)
         })
 
+        this.editorStyleElement = document.createElement('style')
+        this.setupStyleElement()
         this.setupThrottledListeners()
     }
 
@@ -166,7 +186,11 @@ export default class GroupCollab<SocketMethodName extends string> {
     public set lockedBlocks(value: LockedBlock[]) {
         const oldLockedBlocks = this._lockedBlocks
         this._lockedBlocks = value.map(b => ({ ...b }))
-        this.renderLockedBlocks(oldLockedBlocks, this._lockedBlocks)
+        // this.renderLockedBlocks(oldLockedBlocks, this._lockedBlocks)
+    }
+
+    public get currentLockedBlockId(): string | null {
+        return this._currentEditorLockingBlockId;
     }
     /**
      * Remove event listeners on socket and editor
@@ -188,17 +212,18 @@ export default class GroupCollab<SocketMethodName extends string> {
     public listen() {
         this.socket.on(this.socketMethodName, this.onReceiveChange)
         this.editor.on(this.editorBlockEvent, this.onEditorBlockEvent)
-        const redactor =
-            (this.editor as any)?.ui.redactor ??
-            document.querySelector(`#${(this.editor as any)?.configuration.holder} .${this.EditorCSS.editorRedactor}`) ??
-            document.querySelector(`.${this.EditorCSS.editorRedactor}`)
+        const redactor = this.getRedactor();
+        if (!redactor) {
+            console.error("Could not initialize redactor observer.")
+            return
+        }
         this.redactorObserver.observe(redactor, {
             childList: true,
             attributes: true,
             attributeFilter: ['class'],
             subtree: true,
         })
-        const toolboxSettingsEl = document.querySelector(`#${(this.editor as any)?.configuration?.holder ?? ""} .${this.EditorCSS.toolbarSettings}`) ?? document.querySelector(`.${this.EditorCSS.toolbarSettings}`)
+        const toolboxSettingsEl = this.getEditorHolder()?.querySelector(`.${this.EditorCSS.toolbarSettings}`) ?? document.querySelector(`.${this.EditorCSS.toolbarSettings}`)
         if (toolboxSettingsEl)
             this.toolboxObserver.observe(toolboxSettingsEl, {
                 childList: true,
@@ -219,7 +244,8 @@ export default class GroupCollab<SocketMethodName extends string> {
             selected: 'cdx-realtime-block--selected',
             inlineCursor: 'cdx-realtime-inline-cursor',
             inlineSelection: 'cdx-realtime-inline-selection',
-            deletePending: "cdx-realtime-block--delete-pending"
+            deletePending: "cdx-realtime-block--delete-pending",
+            lockedBlock: "cdx-realtime-block--locked",
         }
     }
     private get EditorCSS() {
@@ -227,6 +253,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             baseBlock: 'ce-block',
             focused: 'ce-block--focused',
             selected: 'ce-block--selected',
+            editorWrapper: "codex-editor",
             editorRedactor: 'codex-editor__redactor',
             blockContent: 'ce-block__content',
             toolbar: "ce-toolbar",
@@ -287,7 +314,7 @@ export default class GroupCollab<SocketMethodName extends string> {
 
         let isDeletePending = false;
         if (!isToolbarClosing) {
-            const toolboxDeleteSetting = document.querySelector(`.${this.EditorCSS.toolbar} ${this.EditorCSS.toolbarDeleteSetting}`)
+            const toolboxDeleteSetting = this.getEditorHolder()?.querySelector(`.${this.EditorCSS.toolbar} ${this.EditorCSS.toolbarDeleteSetting}`)
             if (!(toolboxDeleteSetting instanceof HTMLElement)) return;
             // console.log("🚀 toolboxDeleteSetting:", toolboxDeleteSetting)
 
@@ -378,6 +405,17 @@ export default class GroupCollab<SocketMethodName extends string> {
                 const { index, block } = response
                 this.addBlockToIgnoreListUntilNextRender(block.id, response.type)
                 const customClassList = this.getDOMBlockById(block.id)?.classList
+
+                const blockApi = this.editor.blocks.getById(block.id)
+                if (!blockApi) return;
+
+                //? This fixes the visual flickering btw when updating block data remotely
+                // const Xpath = this.getElementXPath(blockApi.holder);
+                // const nonce = crypto.randomUUID();
+                // this.addStyleToDOM(Xpath, {
+                //     animationName: 'none',
+                // }, nonce)
+
                 this.editor.blocks
                     .update(block.id, block.data)
                     .catch((e) => {
@@ -387,6 +425,11 @@ export default class GroupCollab<SocketMethodName extends string> {
                         }
                     })
                     .then(() => {
+                        // const lockedBlock = this.lockedBlocks.find(b => b.blockId === block.id && b.connectionId !== this.socket.connectionId)
+                        // if (lockedBlock) {
+                        //     this.renderLockedBlocks([], [lockedBlock])
+                        // }
+
                         // some blocks when being selected emit a block-changed event
                         if (customClassList?.contains(this.CSS.selected)) {
                             const domBlock = this.getDOMBlockById(block.id);
@@ -395,6 +438,11 @@ export default class GroupCollab<SocketMethodName extends string> {
                             if (this.config.overrideStyles?.selectedClass)
                                 domBlock.classList.add(this.config.overrideStyles.selectedClass)
                         }
+                    })
+                    .finally(() => {
+                        // setTimeout(() => {
+                        //     this.removeStyleFromDOM(Xpath, nonce)
+                        // }, 700);
                     })
                 break
             }
@@ -497,7 +545,7 @@ export default class GroupCollab<SocketMethodName extends string> {
                     }
                     const rect = rects[0]
                     //* Note if element is not found try without nth-child
-                    const selectedElement = document.querySelector(elementXPath)
+                    const selectedElement = this.getEditorHolder()?.querySelector(elementXPath)
                     if (!(selectedElement instanceof HTMLElement)) return
 
                     //This is used to resize the height of the selection if users have different font sizes/screen zoom in/out s
@@ -565,6 +613,15 @@ export default class GroupCollab<SocketMethodName extends string> {
         const isBlockLocked = this.lockedBlocks.some(b => b.blockId === targetId && b.connectionId !== this.socket.connectionId)
         if (isBlockLocked) return
 
+        // if (type === 'block-changed') {
+        //     if (this._currentEditorLockingBlockId)
+        //         this.debouncedBlockUnlocking?.(targetId, this.socket.connectionId)
+        //     else {
+        //         this._currentEditorLockingBlockId = targetId;
+        //         this.socket.send(this.socketMethodName, { type: BlockLockedType, blockId: targetId, connectionId: this.socket.connectionId })
+        //     }
+        // }
+
         //save after dom changes have been propagated to the necessary tools
         setTimeout(async () => {
             if (type === 'block-changed') {
@@ -598,11 +655,18 @@ export default class GroupCollab<SocketMethodName extends string> {
     }
 
     private setupThrottledListeners() {
+        //TODO refactor this with Record<timeoutToken, listener> maybe instead? so even if you change which block you are changin now, the old block will be unlocked
+        this.debouncedBlockUnlocking = debounce(this.config.blockLockDebounceTime, (blockId, connectionId) => {
+            this.socket.send(this.socketMethodName, { type: BlockUnlockedType, blockId, connectionId })
+            this._currentEditorLockingBlockId = null;
+        })
+
         this.throttledInlineSelectionChange = throttle(this.config.blockChangeThrottleDelay, (event: Event) => {
             if (!this.isListening) return
 
             this.onInlineSelectionChange(event);
         })
+
         this.throttledBlockChange = throttle(this.config.blockChangeThrottleDelay, async (target: BlockAPI, index: number) => {
             if (!this.isListening) return
             const targetId = target.id
@@ -626,7 +690,7 @@ export default class GroupCollab<SocketMethodName extends string> {
         if (!blockId && !connectionId) return null
         const blockIdQuery = blockId ? `='${blockId}'` : "";
         const connQuery = connectionId ? `='${connectionId}'` : ""
-        const domCursor = document.querySelector(
+        const domCursor = this.getEditorHolder()?.querySelector(
             `[${this.blockIdAttributeName}${blockIdQuery}] .${this.EditorCSS.blockContent} [${this.inlineFakeCursorAttributeName}${connQuery}]`,
         )
         if (domCursor instanceof HTMLElement) return domCursor
@@ -641,7 +705,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     }
 
     private getFakeSelections(blockId?: string) {
-        return document.querySelectorAll(
+        return this.getEditorHolder()?.querySelectorAll(
             `[${this.blockIdAttributeName}${blockId ? `='${blockId}'` : ""}] .${this.EditorCSS.blockContent} [${this.inlineFakeSelectionAttributeName}]`,
         )
     }
@@ -677,19 +741,98 @@ export default class GroupCollab<SocketMethodName extends string> {
         if (!this.ignoreEvents[blockId].size) delete this.ignoreEvents[blockId]
     }
 
+    private addStyleToDOM(selector: string, styles: Partial<CSSStyleDeclaration>, nonce: string) {
+        const styleElement = this.editorStyleElement;
+        if (!styleElement) return;
+        const stringifiedStyles = this.stringifyStyles(styles);
+
+        const comment = document.createComment(`nonce: ${nonce}`);
+        styleElement.insertAdjacentText('beforeend', `${selector} {  ${stringifiedStyles} }`);
+        styleElement.insertBefore(comment, styleElement.lastChild);
+    }
+
+    private removeStyleFromDOM(selector: string, nonce: string) {
+        const styleElement = this.editorStyleElement;
+        if (!styleElement) return;
+        const comments = Array.from(styleElement.childNodes).filter(n => n.nodeType === Node.COMMENT_NODE) as Comment[];
+        const targetComment = comments.find(c => c.data.trim() === `nonce: ${nonce}`);
+        if (!targetComment) return;
+
+        targetComment.nextSibling?.remove();
+        targetComment.remove();
+
+    }
+
+    private stringifyStyles(styleObject: Partial<CSSStyleDeclaration>) {
+        const sheet = new CSSStyleSheet();
+        sheet.insertRule(':root {}');
+
+        const rule = sheet.cssRules[0];
+        if (!rule || !(rule instanceof CSSStyleRule)) return;
+
+        Object.assign(rule.style, styleObject);
+        return rule.style.cssText;
+    }
+
     private getDOMBlockById(blockId: string) {
-        const block = document.querySelector(`[${this.blockIdAttributeName}='${blockId}']`)
+        const block = this.getEditorHolder()?.querySelector(`[${this.blockIdAttributeName}='${blockId}']`)
         if (block instanceof HTMLElement) return block
         return null
     }
 
     private getRedactor(): HTMLElement | null {
-        const redactor = document.querySelector(`.${this.EditorCSS.editorRedactor}`)
+        const redactor =
+            (this.editor as any)?.ui.redactor ??
+            this.getEditorHolder()?.querySelector(`.${this.EditorCSS.editorRedactor}`) ??
+            document.querySelector(`.${this.EditorCSS.editorRedactor}`)
         if (!(redactor instanceof HTMLElement)) return null
         return redactor
     }
 
+    private getEditorHolder(): HTMLElement | null {
+        return (this.editor as any)?.ui.wrapper ??
+            document.querySelector(`#${(this.editor as any)?.configuration.holder} .${this.EditorCSS.editorWrapper}`) ??
+            document.querySelector(`.${this.EditorCSS.editorWrapper}`)
+    }
+
     private renderLockedBlocks(oldLockedBlocks: LockedBlock[], newLockedBlocks: LockedBlock[]) {
+        const blocksToUnlock = oldLockedBlocks.filter(ob => !newLockedBlocks.some(nb => nb.blockId === ob.blockId && nb.connectionId === ob.connectionId))
+        const blocksToLock = newLockedBlocks.filter(nb => !oldLockedBlocks.some(ob => ob.blockId === nb.blockId && ob.connectionId === nb.connectionId))
+
+        const collabAttribute = 'data-realtime-collab-locked'
+        for (const block of blocksToUnlock) {
+            const domBlock = this.getDOMBlockById(block.blockId)
+            if (!domBlock) continue
+
+            const contentEditableElements = domBlock.querySelectorAll(`[contenteditable="false"][${collabAttribute}]`)
+            domBlock.classList.remove(this.CSS.lockedBlock)
+            contentEditableElements.forEach(el => {
+                el.setAttribute('contenteditable', 'true')
+                el.removeAttribute(collabAttribute)
+            })
+            if (this.config.overrideStyles?.lockedBlockClass)
+                domBlock.classList.remove(this.config.overrideStyles.lockedBlockClass)
+        }
+
+        for (const block of blocksToLock) {
+            const domBlock = this.getDOMBlockById(block.blockId)
+            if (!domBlock) continue
+
+            const contentEditableElements = domBlock.querySelectorAll('[contenteditable="true"]')
+            contentEditableElements.forEach(el => {
+                el.setAttribute('contenteditable', 'false')
+                el.setAttribute(collabAttribute, '')
+            })
+            domBlock.classList.add(this.CSS.lockedBlock)
+            if (this.config.overrideStyles?.lockedBlockClass)
+                domBlock.classList.add(this.config.overrideStyles.lockedBlockClass)
+        }
+
+    }
+
+    private setupStyleElement() {
+        this.editorStyleElement.setAttribute('data-realtime-collab-styles', '')
+        this.getEditorHolder()?.insertAdjacentElement('afterbegin', this.editorStyleElement)
     }
 
     private getContentAndBlockIdFromNode(node: Node): { contentElement: HTMLElement; blockId: string } | null {

@@ -190,7 +190,7 @@
                 let timeout = null
 
                 const isOpera = navigator.userAgentData.brands.some((brand) => brand.brand.toLowerCase().includes('opera'))
-                const askTimeout = isOpera ? 500 : 3000
+                const askTimeout = isOpera ? 500 : 2000
                 toastr.options = {
                     progressBar: true,
                     preventDuplicates: true,
