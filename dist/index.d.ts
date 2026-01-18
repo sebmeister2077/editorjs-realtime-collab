@@ -28,6 +28,12 @@ type LocalConfig = {
      * @default 1500
      */
     blockLockDebounceTime: number;
+    /**
+     * For example the table tool triggers block changes even if the emitting user clicks on another block.
+     * In such cases you can add the tool's name here to enable checking its data for changes before locking that block.
+     * @default ["table"]
+    */
+    toolsWithDataCheck: string[];
     cursor?: {
         color?: string;
     };
@@ -37,12 +43,6 @@ type LocalConfig = {
         pendingDeletionClass?: string;
         lockedBlockClass?: string;
     };
-    /**
-     * For example the table tool triggers block changes even if the emitting user clicks on another block.
-     * In such cases you can add the tool's name here to enable checking its data for changes before locking that block.
-     * @default ["table"]
-     */
-    toolsWhereDataShouldBeCheckedForChanges: string[];
 };
 export type MessageData = MakeConditionalType<{
     index: number;

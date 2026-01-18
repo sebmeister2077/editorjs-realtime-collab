@@ -39,6 +39,12 @@ type LocalConfig = {
      * @default 1500
      */
     blockLockDebounceTime: number
+    /**
+     * For example the table tool triggers block changes even if the emitting user clicks on another block.
+     * In such cases you can add the tool's name here to enable checking its data for changes before locking that block.
+     * @default ["table"]
+    */
+    toolsWithDataCheck: string[];
     cursor?: { color?: string }
     overrideStyles?: {
         cursorClass?: string;
@@ -46,12 +52,6 @@ type LocalConfig = {
         pendingDeletionClass?: string;
         lockedBlockClass?: string;
     };
-    /**
-     * For example the table tool triggers block changes even if the emitting user clicks on another block.
-     * In such cases you can add the tool's name here to enable checking its data for changes before locking that block.
-     * @default ["table"]
-     */
-    toolsWhereDataShouldBeCheckedForChanges: string[];
 }
 
 export type MessageData =
@@ -162,7 +162,7 @@ export default class GroupCollab<SocketMethodName extends string> {
         const defaultConfig: LocalConfig = {
             blockChangeThrottleDelay: 300,
             blockLockDebounceTime: 1500,
-            toolsWhereDataShouldBeCheckedForChanges: ["table"],
+            toolsWithDataCheck: ["table"],
         }
         this.config = {
             ...defaultConfig,
@@ -416,7 +416,7 @@ export default class GroupCollab<SocketMethodName extends string> {
                 const { index, block } = response
                 this.addBlockToIgnoreListUntilNextRender(block.id, response.type)
                 this.editor.blocks.insert(block.tool, block.data, null, index, false, false, block.id)
-                const shouldHaveInternalState = this.config.toolsWhereDataShouldBeCheckedForChanges.includes(block.tool)
+                const shouldHaveInternalState = this.config.toolsWithDataCheck.includes(block.tool)
                 if (shouldHaveInternalState) {
                     this._customToolsInternalState[block.id] = { data: block.data, tunes: (block as any).tunes ?? {} };
                 }
@@ -425,7 +425,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             case 'block-changed': {
                 const { index, block } = response
                 this.addBlockToIgnoreListUntilNextRender(block.id, response.type)
-                const shouldHaveInternalState = this.config.toolsWhereDataShouldBeCheckedForChanges.includes(block.tool)
+                const shouldHaveInternalState = this.config.toolsWithDataCheck.includes(block.tool)
                 if (shouldHaveInternalState) {
                     this._customToolsInternalState[block.id] = { data: block.data, tunes: (block as any).tunes ?? {} };
                 }
@@ -478,7 +478,7 @@ export default class GroupCollab<SocketMethodName extends string> {
                 const blockIndex = this.editor.blocks.getBlockIndex(blockId)
                 const blockName = this.editor.blocks.getBlockByIndex(blockIndex)?.name ?? ""
                 this.editor.blocks.delete(blockIndex);
-                const shouldHaveInternalState = this.config.toolsWhereDataShouldBeCheckedForChanges.includes(blockName)
+                const shouldHaveInternalState = this.config.toolsWithDataCheck.includes(blockName)
                 if (shouldHaveInternalState) {
                     delete this._customToolsInternalState[blockId];
                 }
@@ -644,7 +644,7 @@ export default class GroupCollab<SocketMethodName extends string> {
         const isBlockLocked = this.lockedBlocks.some(b => b.blockId === targetId && b.connectionId !== this.socket.connectionId)
         if (isBlockLocked) return
 
-        const shouldBlockHaveInternalState = this.config.toolsWhereDataShouldBeCheckedForChanges.includes(target.name)
+        const shouldBlockHaveInternalState = this.config.toolsWithDataCheck.includes(target.name)
 
 
         // block changes are throttled, thus se have this separate from the other DOM events
@@ -666,6 +666,10 @@ export default class GroupCollab<SocketMethodName extends string> {
             else {
                 this._currentEditorLockingBlockId = targetId;
                 this.socket.send(this.socketMethodName, { type: BlockLockedType, blockId: targetId, connectionId: this.socket.connectionId })
+
+                // Remove any other user's cursor/selection in this block
+                this.getFakeCursor({ blockId: targetId })?.remove()
+                this.getFakeSelections(targetId)?.forEach(sel => sel.remove())
                 this.debouncedBlockUnlocking(targetId, this.socket.connectionId)
             }
         }
@@ -923,7 +927,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private initializeCustomToolsState() {
         const allBlocks = (this.editor as any).configuration.data?.blocks ?? [];
         for (const block of allBlocks) {
-            if (this.config.toolsWhereDataShouldBeCheckedForChanges.includes(block.type)) {
+            if (this.config.toolsWithDataCheck.includes(block.type)) {
                 this._customToolsInternalState[block.id] = { data: block.data, tunes: (block as any).tunes ?? {} };
             }
         }
