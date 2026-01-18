@@ -13,6 +13,8 @@ that synchronizes block changes, cursor selections, and deletion states across m
 
 - ✅ Block-level selection + pending deletion state
 
+- ✅ **Block locking** prevents concurrent edits to the same block
+
 - ✅ Works with **any socket implementation**
 
 - ✅ Type-safe TypeScript API
@@ -84,6 +86,7 @@ new RealtimeCollabPlugin({
   socket,
   socketMethodName?,
   blockChangeThrottleDelay?,
+  blockLockDebounceTime?,
   cursor?,
   overrideStyles?,
 })
@@ -93,16 +96,18 @@ new RealtimeCollabPlugin({
 
 ## Config Params
 
-| Field                    | Type                                            | Description                                              | Default              |
-| ------------------------ | ----------------------------------------------- | -------------------------------------------------------- | -------------------- |
-| editor                   | `EditorJS`                                      | The editorJs instance you want to listen to              | `required*`          |
-| socket                   | `INeededSocketFields`                                        | The socket instance (or custom method bingings)          | `required*`          |
-| socketMethodName         | `string`                                        | The event name to use when communicating between sockets | `editorjs-update`    |
-| blockChangeThrottleDelay | `number`                                        | Delay to throttle block changes (ms).                    | `300`                |
-| cursor.color                   | `string`                             | Color of remote cursors configuration                                     | `#0d0c0f` |
-| overrideStyles.cursorClass           | `string` | Override selected block class                                          | —                 |
-| overrideStyles.cursorClass           | `string` | Override cursor CSS class                                          | —                 |
-| overrideStyles.pendingDeletionClass           | `string` | Override delete-pending block class                                          | —                 |
+| Field                               | Type                                            | Description                                              | Default              |
+| ------------------------            | ----------------------------------------------- | -------------------------------------------------------- | -------------------- |
+| editor                              | `EditorJS`                                      | The editorJs instance you want to listen to              | `required*`          |
+| socket                              | `INeededSocketFields`                           | The socket instance (or custom method bingings)          | `required*`          |
+| socketMethodName                    | `string`                                        | The event name to use when communicating between sockets | `editorjs-update`    |
+| blockChangeThrottleDelay            | `number`                                        | Delay to throttle block changes (ms).                    | `300`                |
+| blockLockDebounceTime               | `number`                                        | Delay to debounce block unlocking (ms).                  | `1500`               |
+| cursor.color                        | `string`                                        | Color of remote cursors configuration                    | `#0d0c0f`            |
+| overrideStyles.cursorClass          | `string`                                        | Override cursor CSS class                                | —                    |
+| overrideStyles.selectedClass        | `string`                                        | Override selected block class                            | —                    |
+| overrideStyles.pendingDeletionClass | `string`                                        | Override delete-pending block class                      | —                    |
+| overrideStyles.lockedBlockClass     | `string`                                        | Override locked block CSS class                          | —                    |
 
 ## Listening Control
 
@@ -130,6 +135,44 @@ This is useful when:
 - Switching documents
 
 - Cleaning up in SPA route changes
+
+## Block Locking
+
+The plugin automatically locks blocks when a user starts editing them, preventing concurrent modifications by other users. This ensures data consistency and prevents editing conflicts.
+
+### How It Works
+
+- When a user begins editing a block, it gets **locked** and synced to all other clients
+- Other users see a visual indicator on locked blocks (via CSS)
+- Locked blocks are protected from remote changes until unlocked
+- Blocks automatically **unlock** after a period of inactivity (debounced)
+- Lock state is tied to `connectionId` — if a user disconnects, their locks are released
+
+### Accessing Lock State
+
+```js
+// Get all currently locked blocks by external users
+const locks = realtimeCollab.lockedBlocks
+// [{blockId: 'abc123', connectionId: 'user-1'}, ...]
+
+// Get the block currently being edited by this user
+const myLockedBlock = realtimeCollab.currentLockedBlockId
+// 'abc123' or null
+```
+
+### Configuration
+
+Control lock timing with `blockLockDebounceTime` (default: 1500ms):
+
+```js
+new RealtimeCollabPlugin({
+  editor,
+  socket,
+  blockLockDebounceTime: 2000, // unlock after 2s of inactivity
+})
+```
+
+This prevents locks from being released too quickly during normal typing while ensuring they don't persist indefinitely.
 
 ## Examples
 
@@ -243,6 +286,8 @@ Internally, data is synced using strongly typed messages that map directly to Ed
 
 - Pending deletion state
 
+- **Block locked / unlocked events**
+
 - User disconnect events
 
 You generally **do not need to handle these manually** unless:
@@ -264,6 +309,8 @@ The plugin injects default styles for:
 - Selected blocks
 
 - Pending deletions
+
+- **Locked blocks**
 
 You can override any of them via `overrideStyles` or your own CSS.
 
@@ -299,7 +346,6 @@ graph TD
   PluginB -->|Apply Mutations| UserB[User B<br/>Editor.js]
   PluginC -->|Apply Mutations| UserC[User C<br/>Editor.js]
 ```
-
 
 ### Selection & Cursor Sync
 

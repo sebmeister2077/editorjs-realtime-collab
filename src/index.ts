@@ -42,9 +42,9 @@ type LocalConfig = {
     cursor?: { color?: string }
     overrideStyles?: {
         cursorClass?: string;
-        selectedClass?: string,
-        pendingDeletionClass?: string,
-        lockedBlockClass?: string
+        selectedClass?: string;
+        pendingDeletionClass?: string;
+        lockedBlockClass?: string;
     }
 }
 
