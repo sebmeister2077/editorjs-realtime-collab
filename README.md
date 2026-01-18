@@ -103,6 +103,7 @@ new RealtimeCollabPlugin({
 | socketMethodName                    | `string`                                        | The event name to use when communicating between sockets | `editorjs-update`    |
 | blockChangeThrottleDelay            | `number`                                        | Delay to throttle block changes (ms).                    | `300`                |
 | blockLockDebounceTime               | `number`                                        | Delay to debounce block unlocking (ms).                  | `1500`               |
+| toolsWithDataCheck                  | `string[]`                                      | Tools that need data comparison before locking           | `["table"]`          |
 | cursor.color                        | `string`                                        | Color of remote cursors configuration                    | `#0d0c0f`            |
 | overrideStyles.cursorClass          | `string`                                        | Override cursor CSS class                                | —                    |
 | overrideStyles.selectedClass        | `string`                                        | Override selected block class                            | —                    |
@@ -173,6 +174,33 @@ new RealtimeCollabPlugin({
 ```
 
 This prevents locks from being released too quickly during normal typing while ensuring they don't persist indefinitely.
+
+### Handling Tools with False Lock Triggers
+
+Some Editor.js tools (like the **table** tool) emit block change events even when the user isn't actively editing them. This can cause unnecessary block locking.
+
+Use `toolsWithDataCheck` to specify which tools should have their actual data compared before triggering a lock:
+
+```js
+new RealtimeCollabPlugin({
+  editor,
+  socket,
+  toolsWithDataCheck: ['table', 'customTool'], // Only lock if data actually changed
+})
+```
+
+**How it works:**
+
+- For tools in this list, the plugin compares the block's `data` and `tunes` before/after the event
+- Lock is only triggered if the data actually changed
+- Prevents spurious locks from tools that emit events on unrelated editor interactions
+- Default includes `['table']` since it's a known culprit
+
+**When to use:**
+
+- You notice blocks getting locked when users aren't editing them
+- A custom tool triggers change events during interactions with other blocks
+- You want tighter control over lock behavior for specific tools
 
 ## Examples
 

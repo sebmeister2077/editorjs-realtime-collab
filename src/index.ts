@@ -40,8 +40,8 @@ type LocalConfig = {
      */
     blockLockDebounceTime: number
     /**
-     * For example the table tool triggers block changes even if the emitting user clicks on another block.
-     * In such cases you can add the tool's name here to enable checking its data for changes before locking that block.
+     * For example the table tool triggers block changes even if the emitting user does not even interact with the block, which would also emit a locking event.
+     * In such cases you can add the tool's name here to enable checking its data for changes before locking that block. Only `data` and `tunes` are checked to be changed.
      * @default ["table"]
     */
     toolsWithDataCheck: string[];
