@@ -37,6 +37,12 @@ type LocalConfig = {
         pendingDeletionClass?: string;
         lockedBlockClass?: string;
     };
+    /**
+     * For example the table tool triggers block changes even if the emitting user clicks on another block.
+     * In such cases you can add the tool's name here to enable checking its data for changes before locking that block.
+     * @default ["table"]
+     */
+    toolsWhereDataShouldBeCheckedForChanges: string[];
 };
 export type MessageData = MakeConditionalType<{
     index: number;
@@ -84,6 +90,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private _isListening;
     private _currentEditorLockingBlockId;
     private _lockedBlocks;
+    private _customToolsInternalState;
     private ignoreEvents;
     private redactorObserver;
     private toolboxObserver;
@@ -134,6 +141,8 @@ export default class GroupCollab<SocketMethodName extends string> {
     private getRedactor;
     private getEditorHolder;
     private renderLockedBlocks;
+    private compareToolsData;
+    private initializeCustomToolsState;
     private setupStyleElement;
     private getContentAndBlockIdFromNode;
     private isNodeInsideOfEditor;
