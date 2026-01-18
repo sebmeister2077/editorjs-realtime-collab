@@ -186,7 +186,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     public set lockedBlocks(value: LockedBlock[]) {
         const oldLockedBlocks = this._lockedBlocks
         this._lockedBlocks = value.map(b => ({ ...b }))
-        // this.renderLockedBlocks(oldLockedBlocks, this._lockedBlocks)
+        this.renderLockedBlocks(oldLockedBlocks, this._lockedBlocks)
     }
 
     public get currentLockedBlockId(): string | null {
@@ -409,13 +409,6 @@ export default class GroupCollab<SocketMethodName extends string> {
                 const blockApi = this.editor.blocks.getById(block.id)
                 if (!blockApi) return;
 
-                //? This fixes the visual flickering btw when updating block data remotely
-                // const Xpath = this.getElementXPath(blockApi.holder);
-                // const nonce = crypto.randomUUID();
-                // this.addStyleToDOM(Xpath, {
-                //     animationName: 'none',
-                // }, nonce)
-
                 this.editor.blocks
                     .update(block.id, block.data)
                     .catch((e) => {
@@ -425,10 +418,10 @@ export default class GroupCollab<SocketMethodName extends string> {
                         }
                     })
                     .then(() => {
-                        // const lockedBlock = this.lockedBlocks.find(b => b.blockId === block.id && b.connectionId !== this.socket.connectionId)
-                        // if (lockedBlock) {
-                        //     this.renderLockedBlocks([], [lockedBlock])
-                        // }
+                        const lockedBlock = this.lockedBlocks.find(b => b.blockId === block.id && b.connectionId !== this.socket.connectionId)
+                        if (lockedBlock) {
+                            this.renderLockedBlocks([], [lockedBlock])
+                        }
 
                         // some blocks when being selected emit a block-changed event
                         if (customClassList?.contains(this.CSS.selected)) {
@@ -438,11 +431,6 @@ export default class GroupCollab<SocketMethodName extends string> {
                             if (this.config.overrideStyles?.selectedClass)
                                 domBlock.classList.add(this.config.overrideStyles.selectedClass)
                         }
-                    })
-                    .finally(() => {
-                        // setTimeout(() => {
-                        //     this.removeStyleFromDOM(Xpath, nonce)
-                        // }, 700);
                     })
                 break
             }
@@ -582,12 +570,24 @@ export default class GroupCollab<SocketMethodName extends string> {
                 const alreadyLocked = this.lockedBlocks.some(b => b.blockId === blockId)
                 if (alreadyLocked) break;
                 this.lockedBlocks = [...this.lockedBlocks, { blockId, connectionId }]
+                this.addBlockToIgnoreListUntilNextRender(blockId, 'block-changed')
+
+                const blockApi = this.editor.blocks.getById(blockId)
+                if (!blockApi) return;
+
+                //? This fixes the visual flickering btw when updating block data from remote sources
+                const Xpath = this.getElementXPath(blockApi.holder);
+                this.addStyleToDOM(Xpath, {
+                    animationName: 'none',
+                }, blockId)
                 break;
             }
 
             case BlockUnlockedType: {
                 const { blockId, connectionId } = response
                 this.lockedBlocks = this.lockedBlocks.filter(b => !(b.blockId === blockId && b.connectionId === connectionId))
+                this.addBlockToIgnoreListUntilNextRender(blockId, 'block-changed')
+                this.removeStyleFromDOM(blockId);
                 break;
             }
 
@@ -614,8 +614,9 @@ export default class GroupCollab<SocketMethodName extends string> {
         if (isBlockLocked) return
 
         if (type === 'block-changed') {
-            if (this._currentEditorLockingBlockId)
+            if (this._currentEditorLockingBlockId == targetId) {
                 this.debouncedBlockUnlocking(targetId, this.socket.connectionId)
+            }
             else {
                 this._currentEditorLockingBlockId = targetId;
                 this.socket.send(this.socketMethodName, { type: BlockLockedType, blockId: targetId, connectionId: this.socket.connectionId })
@@ -697,7 +698,6 @@ export default class GroupCollab<SocketMethodName extends string> {
             [blockId]: newDebouncedFunc
         }
         newDebouncedFunc(blockId, connectionId);
-        
     }
 
 
@@ -766,7 +766,7 @@ export default class GroupCollab<SocketMethodName extends string> {
         styleElement.insertBefore(comment, styleElement.lastChild);
     }
 
-    private removeStyleFromDOM(selector: string, nonce: string) {
+    private removeStyleFromDOM(nonce: string) {
         const styleElement = this.editorStyleElement;
         if (!styleElement) return;
         const comments = Array.from(styleElement.childNodes).filter(n => n.nodeType === Node.COMMENT_NODE) as Comment[];
@@ -887,15 +887,18 @@ export default class GroupCollab<SocketMethodName extends string> {
         return false
     }
 
-    private getElementXPath(selectedNode: HTMLElement) {
+    private getElementXPath(selectedNode: HTMLElement, omitCountForBlock = false) {
         let element = selectedNode
         // If the element does not have an ID, construct the XPath based on its ancestors
         const paths = []
         while (element.parentNode instanceof HTMLElement && !element.classList.contains(this.EditorCSS.editorRedactor)) {
             const dataId = element.getAttribute(this.blockIdAttributeName)
             let elementSelector = element.localName.toLowerCase()
-            if (dataId) elementSelector += `[${this.blockIdAttributeName}='${dataId}']`
-            if (element.previousElementSibling) {
+            if (dataId)
+                elementSelector += `[${this.blockIdAttributeName}='${dataId}']`
+
+            const ignoreNthChild = omitCountForBlock && dataId;
+            if (!ignoreNthChild && element.previousElementSibling) {
                 let sibling: Element | null = element
                 let count = 1
                 while ((sibling = sibling.previousElementSibling)) {
