@@ -666,6 +666,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             else {
                 this._currentEditorLockingBlockId = targetId;
                 this.socket.send(this.socketMethodName, { type: BlockLockedType, blockId: targetId, connectionId: this.socket.connectionId })
+                this.debouncedBlockUnlocking(targetId, this.socket.connectionId)
             }
         }
 
