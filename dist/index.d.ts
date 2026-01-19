@@ -36,10 +36,12 @@ type LocalConfig = {
     toolsWithDataCheck: string[];
     cursor?: {
         color?: string;
+        selectionColor?: string;
     };
     overrideStyles?: {
         cursorClass?: string;
         selectedClass?: string;
+        inlineSelectionClass?: string;
         pendingDeletionClass?: string;
         lockedBlockClass?: string;
     };
@@ -57,11 +59,14 @@ export type MessageData = MakeConditionalType<{
     toBlockIndex: number;
     toBlockId: string;
 }, typeof BlockMovedMutationType> | MakeConditionalType<{
-    elementXPath: string | null;
+    elementXPath: string;
     blockId: string;
     rects: Rect[];
     containerWidth: number;
     connectionId: string;
+    elementNodeIndex: number;
+    anchorOffset: number;
+    focusOffset: number;
 }, typeof UserInlineSelectionChangeType> | MakeConditionalType<{
     connectionId: string;
 }, typeof UserDisconnectedType> | MakeConditionalType<{
@@ -104,6 +109,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private blockIdAttributeName;
     private inlineFakeCursorAttributeName;
     private inlineFakeSelectionAttributeName;
+    private connectionIdAttributeName;
     constructor({ editor, socket, socketMethodName, ...config }: GroupCollabConfigOptions<SocketMethodName>);
     get isListening(): boolean;
     get lockedBlocks(): LockedBlock[];
@@ -130,6 +136,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private getFakeCursor;
     private createFakeCursor;
     private getFakeSelections;
+    private createSelectionElement;
     private validateEventDetail;
     private addBlockToIgnoreListUntilNextRender;
     private addBlockToIgnorelist;
@@ -145,11 +152,11 @@ export default class GroupCollab<SocketMethodName extends string> {
     private initializeCustomToolsState;
     private setupStyleElement;
     private getContentAndBlockIdFromNode;
+    private getBoundingClientRectForSelection;
     private isNodeInsideOfEditor;
     private getElementXPath;
     private getNodeRelativeChildIndex;
     private applyNeccessaryChanges;
     private calculateRelativeRects;
-    private createSelectionElement;
 }
 export {};

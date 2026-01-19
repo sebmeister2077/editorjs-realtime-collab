@@ -45,10 +45,11 @@ type LocalConfig = {
      * @default ["table"]
     */
     toolsWithDataCheck: string[];
-    cursor?: { color?: string }
+    cursor?: { color?: string; selectionColor?: string; };
     overrideStyles?: {
         cursorClass?: string;
         selectedClass?: string;
+        inlineSelectionClass?: string;
         pendingDeletionClass?: string;
         lockedBlockClass?: string;
     };
@@ -81,16 +82,16 @@ export type MessageData =
     >
     | MakeConditionalType<
         {
-            elementXPath: string | null
+            elementXPath: string
             blockId: string
             rects: Rect[]
             containerWidth: number
 
             connectionId: string;
             //idk if i'll use these
-            //   elementNodeIndex: number
-            //   anchorOffset: number
-            //   focusOffset: number
+            elementNodeIndex: number
+            anchorOffset: number
+            focusOffset: number
         },
         typeof UserInlineSelectionChangeType
     >
@@ -150,6 +151,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private blockIdAttributeName = 'data-id'
     private inlineFakeCursorAttributeName = 'data-realtime-fake-inline-cursor'
     private inlineFakeSelectionAttributeName = 'data-realtime-fake-inline-selection'
+    private connectionIdAttributeName = 'data-realtime-connection-id'
     public constructor({ editor, socket, socketMethodName, ...config }: GroupCollabConfigOptions<SocketMethodName>) {
         this.editor = editor
         this.socket = socket
@@ -396,9 +398,9 @@ export default class GroupCollab<SocketMethodName extends string> {
             blockId,
             elementXPath: path,
             containerWidth,
-            // anchorOffset,
-            // focusOffset,
-            // elementNodeIndex,
+            anchorOffset,
+            focusOffset,
+            elementNodeIndex,
             rects: finalRects,
             connectionId: this.socket.connectionId
         }
@@ -523,37 +525,49 @@ export default class GroupCollab<SocketMethodName extends string> {
             }
 
             case 'inline-selection-change': {
-                const { type, rects, elementXPath, blockId, connectionId } = response
+                const { type, rects, elementXPath, blockId, connectionId, anchorOffset, elementNodeIndex, focusOffset } = response
                 const blockContent = this.getDOMBlockById(blockId)?.querySelector(`.${this.EditorCSS.blockContent}`)
                 if (!blockContent || !rects.length) return
 
-                const isSelection = rects.some((r) => r.width > 1)
+                const isSelection = anchorOffset !== focusOffset
                 const isReset = elementXPath === null || isSelection
                 let cursor = this.getFakeCursor({ connectionId })
                 const cursorExists = Boolean(cursor)
                 if (isReset) {
                     cursor?.remove()
-                    return
                 }
                 // console.log(response)
-
                 if (isSelection) {
-                    const MARGIN_OF_ERROR_IN_PX = 6
-                    /**
-                     * Ok so for this to work properly i have to check that the
-                     * current selection Rect width equals the distance between left and right (IN DOM content ofc)
-                     * If it doesn't then that means that the next rect should be concatenated to the current rect
-                     * (because text overflowed on the other device but not this one)
-                     */
-                    // this.getFakeSelections(blockId).forEach((sel) => sel.remove())
-                    // let currentSelection = this.createSelectionElement()
-                    // for (const rect of rects) {
-                    //     if (Math.abs(currentSelection.clientWidth) < MARGIN_OF_ERROR) {
-                    //         //create new selection, on the next line
-                    //     }
+                    const editorHolder = this.getEditorHolder()
+                    if (!editorHolder) return
+                    const parentElement = editorHolder.querySelector(elementXPath)
+                    if (!(parentElement instanceof HTMLElement)) return
 
-                    // }
+                    this.getFakeSelections({ blockId })?.forEach((sel) => sel.remove())
+                    const nodeElement = parentElement.childNodes[elementNodeIndex];
+                    if (!nodeElement) return
+
+                    const calculatedSelectionRects = this.getBoundingClientRectForSelection(nodeElement, anchorOffset, focusOffset)
+                    const { selectionColor } = this.config.cursor ?? {}
+                    // Adjust rects to be relative to editorHolder
+                    const parentElementRect = editorHolder.getBoundingClientRect()
+
+                    for (let i = 0; i < calculatedSelectionRects.length; i++) {
+                        const rect = calculatedSelectionRects.item(i)
+                        if (!rect) continue
+                        const selectionElement = this.createSelectionElement({ blockId, connectionId })
+                        // Adjust rect position relative to parentElement
+                        selectionElement.style.top = `${rect.top - parentElementRect.top}px`
+                        selectionElement.style.left = `${rect.left - parentElementRect.left}px`
+                        selectionElement.style.width = `${rect.width}px`;
+                        selectionElement.style.height = `${rect.height}px`;
+                        if (selectionColor) selectionElement.style.setProperty('--realtime-inline-selection-color', selectionColor)
+                        editorHolder.insertAdjacentElement("beforeend", selectionElement);
+                        this.addBlockToIgnoreListUntilNextRender(blockId, 'block-changed');
+                    }
                 } else {
+                    // remove existing selection for this user
+                    this.getFakeSelections({ connectionId })?.forEach((sel) => sel.remove())
                     if (!cursor) cursor = this.createFakeCursor(connectionId)
                     else {
                         // reset animation state
@@ -589,7 +603,8 @@ export default class GroupCollab<SocketMethodName extends string> {
             case 'user-disconnected': {
                 const { connectionId } = response
                 const cursor = this.getFakeCursor({ connectionId })
-                const selection = this.getFakeSelections()
+                const selections = this.getFakeSelections({ connectionId })
+                selections?.forEach(sel => sel.remove())
                 cursor?.remove()
                 this.lockedBlocks = this.lockedBlocks.filter(b => b.connectionId !== connectionId)
                 break
@@ -669,7 +684,7 @@ export default class GroupCollab<SocketMethodName extends string> {
 
                 // Remove any other user's cursor/selection in this block
                 this.getFakeCursor({ blockId: targetId })?.remove()
-                this.getFakeSelections(targetId)?.forEach(sel => sel.remove())
+                this.getFakeSelections({ blockId: targetId })?.forEach(sel => sel.remove())
                 this.debouncedBlockUnlocking(targetId, this.socket.connectionId)
             }
         }
@@ -779,10 +794,22 @@ export default class GroupCollab<SocketMethodName extends string> {
         return cursor
     }
 
-    private getFakeSelections(blockId?: string) {
+    private getFakeSelections({ blockId, connectionId }: Partial<Record<"blockId" | "connectionId", string>>) {
+        const connectionQuery = connectionId ? `[${this.connectionIdAttributeName}='${connectionId}']` : ""
         return this.getEditorHolder()?.querySelectorAll(
-            `[${this.blockIdAttributeName}${blockId ? `='${blockId}'` : ""}] .${this.EditorCSS.blockContent} [${this.inlineFakeSelectionAttributeName}]`,
+            `[${this.inlineFakeSelectionAttributeName}${blockId ? `='${blockId}'` : ""}]${connectionQuery}`,
         )
+    }
+
+    private createSelectionElement({ blockId, connectionId }: Record<"blockId" | "connectionId", string>) {
+        const selection = document.createElement('div')
+        selection.setAttribute(this.inlineFakeSelectionAttributeName, blockId)
+        selection.setAttribute(this.connectionIdAttributeName, connectionId)
+        selection.classList.add(this.CSS.inlineSelection)
+        if (this.config.overrideStyles?.inlineSelectionClass)
+            selection.classList.add(this.config.overrideStyles.inlineSelectionClass)
+
+        return selection
     }
 
     private validateEventDetail(ev: CustomEvent): ev is CustomEvent<PossibleEventDetails> {
@@ -958,6 +985,18 @@ export default class GroupCollab<SocketMethodName extends string> {
             blockId,
         }
     }
+
+    private getBoundingClientRectForSelection(node: Node, anchorOffset: number, focusOffset: number): DOMRectList {
+        const range = document.createRange()
+        const start = Math.min(anchorOffset, focusOffset)
+        const end = Math.max(anchorOffset, focusOffset)
+        range.setStart(node, start)
+        range.setEnd(node, end)
+        const rect = range.getClientRects()
+        return rect
+
+    }
+
     private isNodeInsideOfEditor(node: Node) {
         const redactor = (this.editor as any)?.ui?.nodes?.redactor
         if (redactor instanceof HTMLElement) return redactor.contains(node)
@@ -1057,11 +1096,5 @@ export default class GroupCollab<SocketMethodName extends string> {
         return outputRects
     }
 
-    private createSelectionElement() {
-        const selection = document.createElement('div')
-        selection.setAttribute(this.inlineFakeSelectionAttributeName, '')
-        selection.classList.add(this.CSS.inlineSelection)
 
-        return selection
-    }
 }

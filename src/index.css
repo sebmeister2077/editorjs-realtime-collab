@@ -66,3 +66,11 @@
     pointer-events: none;
     opacity: 0.6;
 }
+
+
+.cdx-realtime-inline-selection {
+    position: absolute;
+    background-color: var(--realtime-inline-selection-color, #0d0c0f33);
+    opacity: 0.5;
+    pointer-events: none;
+}
