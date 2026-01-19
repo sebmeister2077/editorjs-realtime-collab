@@ -503,6 +503,10 @@ export default class GroupCollab<SocketMethodName extends string> {
                 if (shouldHaveInternalState) {
                     delete this._customToolsInternalState[blockId];
                 }
+                const selections = this.getFakeSelections({ blockId })
+                selections?.forEach(sel => sel.remove())
+                const cursors = this.getFakeCursors({ blockId })
+                cursors?.forEach(cursor => cursor.remove())
                 break
             }
             case 'block-selection-change': {
@@ -530,11 +534,6 @@ export default class GroupCollab<SocketMethodName extends string> {
                 this.addBlockToIgnoreListUntilNextRender(blockId, response.type)
                 const block = this.getDOMBlockById(blockId)
                 if (!block) return
-
-                const selections = this.getFakeSelections({ blockId })
-                selections?.forEach(sel => sel.remove())
-                const cursors = this.getFakeCursors({ blockId })
-                cursors?.forEach(cursor => cursor.remove())
 
                 if (isDeletePending) {
                     block.classList.add(this.CSS.deletePending)
@@ -649,6 +648,11 @@ export default class GroupCollab<SocketMethodName extends string> {
                 this.addStyleToDOM(Xpath, {
                     animationName: 'none',
                 }, blockId)
+
+                const cursors = this.getFakeCursors({ blockId })
+                cursors?.forEach(cursor => cursor.remove())
+                const selections = this.getFakeSelections({ blockId })
+                selections?.forEach(sel => sel.remove())
                 break;
             }
 
