@@ -264,7 +264,6 @@
                             socket.send(receiveEvent, { data, throttleTimeoutValue })
                         })
                     })
-                    const colors = ['red', 'green', 'blue']
 
                     let groupCollab = setupPlugin()
 
@@ -297,6 +296,9 @@
                     })
 
                     function setupPlugin() {
+                        const colors = ['red', 'green', 'blue', 'orange', 'purple', 'cyan', 'magenta', 'lime', 'teal', 'pink']
+                        const colorIndex = Math.floor(Math.random() * colors.length)
+                        console.log('Assigned cursor color:', colors[colorIndex])
                         return new RealtimeCollabPlugin({
                             editor,
                             socket: {
@@ -306,7 +308,7 @@
                                 connectionId: userId,
                             },
                             blockChangeThrottleDelay: throttleTimeoutValue,
-                            cursor: { color: colors[Math.floor(Math.random() * colors.length)] },
+                            cursor: { color: colors[colorIndex], selectionColor: colors[colorIndex] },
                         })
                     }
                 }
