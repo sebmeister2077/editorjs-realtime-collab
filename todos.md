@@ -1,8 +1,10 @@
+# Todos
+
 - [x] Investigate inline selection change event, seems to not be throttled. (Must) (Fixed)
 - [x] Potentially make cursor animation be enabled only once the user stops typing for a short period. (Nice to have)
 - [x] Fix users writting on the same line causing cursor jumping. (Must)
 - [x] Show inline selection of remote users in the collaborative editor. (Must)
-- [ ] Fix cursor is positioned correctly, even if the container size is different. (Must)
+- [x] Fix cursor is positioned correctly, even if the container size is different. (Must)
 - [ ] Internal feature to temporary block ui cursors and selection changes while the container is being resized. Or some other solution (Must, Dependent on above)
 - [ ] Add option to do a sync on reconnect (as an interface function). (Nice to have, Useful)
 - [ ] Possibly add user list display with colors and names. (Nice to have)
