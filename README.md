@@ -104,8 +104,10 @@ new RealtimeCollabPlugin({
 | blockChangeThrottleDelay            | `number`                                        | Delay to throttle block changes (ms).                    | `300`                |
 | blockLockDebounceTime               | `number`                                        | Delay to debounce block unlocking (ms).                  | `1500`               |
 | toolsWithDataCheck                  | `string[]`                                      | Tools that need data comparison before locking           | `["table"]`          |
-| cursor.color                        | `string`                                        | Color of remote cursors configuration                    | `#0d0c0f`            |
+| cursor.color                        | `string`                                        | Color of remote cursors (set per connectionId)           | `#0d0c0f`            |
+| cursor.selectionColor               | `string`                                        | Color of remote text selections (set per connectionId)   | `#0d0c0f33`          |
 | overrideStyles.cursorClass          | `string`                                        | Override cursor CSS class                                | —                    |
+| overrideStyles.inlineSelectionClass | `string`                                        | Override inline selection CSS class                      | —                    |
 | overrideStyles.selectedClass        | `string`                                        | Override selected block class                            | —                    |
 | overrideStyles.pendingDeletionClass | `string`                                        | Override delete-pending block class                      | —                    |
 | overrideStyles.lockedBlockClass     | `string`                                        | Override locked block CSS class                          | —                    |
@@ -341,6 +343,8 @@ The plugin injects default styles for:
 - **Locked blocks**
 
 You can override any of them via `overrideStyles` or your own CSS.
+
+**Note:** Cursor and selection colors are set individually per connection. When configuring colors dynamically, use a mapping like `colorMap[connectionId]` to assign unique colors to each user.
 
 ---
 
