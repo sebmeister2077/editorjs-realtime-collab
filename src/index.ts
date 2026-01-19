@@ -158,6 +158,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private editorStyleElement: HTMLStyleElement;
     private throttledBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
     private throttledInlineSelectionChange?: throttle<(e: Event) => void> = undefined
+    private debouncedRerenderSelections?: debounce<() => void> = undefined
     private _debouncedBlockUnlockingsMap: Record<string, debounce<(blockId: string, connectionId: string) => void>> = {};
     private localBlockStates: Record<string, Set<'selected' | 'focused' | "deleting">> = {}
 
@@ -197,9 +198,13 @@ export default class GroupCollab<SocketMethodName extends string> {
             this.handleToolboxMutation(lastMutation)
         })
 
-        this.resizeObserver = new ResizeObserver(debounce(100, () => {
+        this.debouncedRerenderSelections = debounce(100, () => {
             this.rerenderAllRemoteSelections();
-        }));
+        });
+
+        this.resizeObserver = new ResizeObserver(() => {
+            this.debouncedRerenderSelections?.();
+        });
 
         this.editorStyleElement = document.createElement('style')
         this.setupStyleElement()

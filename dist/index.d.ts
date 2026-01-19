@@ -104,6 +104,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private editorStyleElement;
     private throttledBlockChange?;
     private throttledInlineSelectionChange?;
+    private debouncedRerenderSelections?;
     private _debouncedBlockUnlockingsMap;
     private localBlockStates;
     private editorBlockEvent;
