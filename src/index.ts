@@ -118,6 +118,16 @@ type LockedBlock = { blockId: string; connectionId: string }
 type EditorEvents = keyof BlockMutationEventMap
 type Events = EditorEvents | typeof UserInlineSelectionChangeType | typeof UserBlockSelectionChangeType | typeof UserBlockDeletionChangeType | typeof BlockLockedType | typeof BlockUnlockedType
 type ToolData = { data: Object, tunes: Object };
+type RemoteSelectionData = {
+    elementXPath: string;
+    blockId: string;
+    connectionId: string;
+    anchorOffset: number;
+    focusOffset: number;
+    elementNodeIndex: number;
+    color: string;
+    selectionColor: string;
+}
 
 export type INeededSocketFields<SocketMethodName extends string> = {
     send(socketMethod: SocketMethodName, data: MessageData): void
@@ -138,11 +148,13 @@ export default class GroupCollab<SocketMethodName extends string> {
     private _currentEditorLockingBlockId: string | null = null;
     private _lockedBlocks: LockedBlock[] = [];
     private _customToolsInternalState: Record<string, ToolData> = {}
+    private _remoteSelections: Map<string, RemoteSelectionData> = new Map(); // key: connectionId
 
     // events to ignore until next render
     private ignoreEvents: Record<string, Set<Events>> = {}
     private redactorObserver: MutationObserver
     private toolboxObserver: MutationObserver;
+    private resizeObserver: ResizeObserver;
     private editorStyleElement: HTMLStyleElement;
     private throttledBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
     private throttledInlineSelectionChange?: throttle<(e: Event) => void> = undefined
@@ -180,10 +192,14 @@ export default class GroupCollab<SocketMethodName extends string> {
         })
 
         this.toolboxObserver = new MutationObserver((mutations, observer) => {
-            const lastMutation = mutations.at(-1)
+            const lastMutation = mutations[mutations.length - 1]
             if (!lastMutation) return
             this.handleToolboxMutation(lastMutation)
         })
+
+        this.resizeObserver = new ResizeObserver(debounce(100, () => {
+            this.rerenderAllRemoteSelections();
+        }));
 
         this.editorStyleElement = document.createElement('style')
         this.setupStyleElement()
@@ -217,6 +233,7 @@ export default class GroupCollab<SocketMethodName extends string> {
         this.editor.off(this.editorBlockEvent, this.onEditorBlockEvent)
         this.redactorObserver.disconnect()
         this.toolboxObserver.disconnect()
+        this.resizeObserver.disconnect()
         document.removeEventListener('selectionchange', this.throttledInlineSelectionChange!)
         window.removeEventListener("beforeunload", this.onDisconnect, { capture: true })
         this.socket.send(this.socketMethodName, { type: UserDisconnectedType, connectionId: this.socket.connectionId })
@@ -250,6 +267,14 @@ export default class GroupCollab<SocketMethodName extends string> {
             })
         else
             console.error("Could not initialize toolbox observer.")
+        
+        const editorHolder = this.getEditorHolder();
+        if (editorHolder) {
+            this.resizeObserver.observe(editorHolder);
+        } else {
+            console.error("Could not initialize resize observer.")
+        }
+
         document.addEventListener('selectionchange', this.throttledInlineSelectionChange!)
         window.addEventListener("beforeunload", this.onDisconnect, { capture: true })
 
@@ -490,6 +515,13 @@ export default class GroupCollab<SocketMethodName extends string> {
                 const toCursors = this.getFakeCursors({ blockId: toBlockId })
                 toCursors?.forEach(cursor => cursor.remove())
 
+                // Remove stored selection data for affected blocks
+                this._remoteSelections.forEach((data, connectionId) => {
+                    if (data.blockId === fromBlockId || data.blockId === toBlockId) {
+                        this._remoteSelections.delete(connectionId);
+                    }
+                });
+
                 break
             }
 
@@ -507,6 +539,13 @@ export default class GroupCollab<SocketMethodName extends string> {
                 selections?.forEach(sel => sel.remove())
                 const cursors = this.getFakeCursors({ blockId })
                 cursors?.forEach(cursor => cursor.remove())
+                
+                // Remove stored selection data for this block
+                this._remoteSelections.forEach((data, connectionId) => {
+                    if (data.blockId === blockId) {
+                        this._remoteSelections.delete(connectionId);
+                    }
+                });
                 break
             }
             case 'block-selection-change': {
@@ -552,73 +591,29 @@ export default class GroupCollab<SocketMethodName extends string> {
                 const blockContent = this.getDOMBlockById(blockId)?.querySelector(`.${this.EditorCSS.blockContent}`)
                 if (!blockContent /* || !rects.length */) return
 
-                const isSelection = anchorOffset !== focusOffset
-                const isReset = elementXPath === null || isSelection
-                if (isReset) {
+                // Store or remove the selection data
+                if (elementXPath === null) {
+                    // Reset/clear selection for this user
+                    this._remoteSelections.delete(connectionId);
                     const oldCursors = this.getFakeCursors({ connectionId })
                     oldCursors?.forEach(cursor => cursor.remove())
-                }
-
-                // remove existing selection for this user
-                // console.log(response)
-                const editorHolder = this.getEditorHolder()
-                if (!editorHolder) return
-                const parentElement = editorHolder.querySelector(elementXPath)
-                if (!(parentElement instanceof HTMLElement)) return
-
-                const nodeElement = parentElement.childNodes[elementNodeIndex];
-                if (!nodeElement) return
-                const calculatedSelectionRects = this.getBoundingClientRectForSelection(nodeElement, anchorOffset, focusOffset)
-                const parentElementRect = editorHolder.getBoundingClientRect()
-
-                this.getFakeSelections({ connectionId })?.forEach((sel) => sel.remove())
-                if (isSelection) {
-
-                    // Adjust rects to be relative to editorHolder
-
-                    for (let i = 0; i < calculatedSelectionRects.length; i++) {
-                        const rect = calculatedSelectionRects.item(i)
-                        if (!rect) continue
-                        const selectionElement = this.createSelectionElement({ blockId, connectionId })
-                        // Adjust rect position relative to parentElement
-                        selectionElement.style.top = `${rect.top - parentElementRect.top}px`
-                        selectionElement.style.left = `${rect.left - parentElementRect.left}px`
-                        selectionElement.style.width = `${rect.width}px`;
-                        selectionElement.style.height = `${rect.height}px`;
-                        if (selectionColor) selectionElement.style.setProperty('--realtime-inline-selection-color', selectionColor)
-                        editorHolder.insertAdjacentElement("beforeend", selectionElement);
-                        this.addBlockToIgnoreListUntilNextRender(blockId, 'block-changed');
-                    }
+                    const oldSelections = this.getFakeSelections({ connectionId })
+                    oldSelections?.forEach(sel => sel.remove())
                 } else {
-                    let cursor: HTMLDivElement;
-                    if (isReset)
-                        cursor = this.createFakeCursor({ connectionId, blockId })
-                    else {
-                        cursor = this.getFakeCursors({ connectionId })?.item(0) as HTMLDivElement;
-                        if (!cursor) cursor = this.createFakeCursor({ connectionId, blockId })
-                        // reset animation state
-                        cursor.style.animation = 'none'
-                        cursor.offsetHeight // trigger reflow
-                        cursor.style.animation = ''
-                    }
-                    const rect = calculatedSelectionRects.item(0)
-                    if (!rect) return;
-                    //* Note if element is not found try without nth-child
-                    const selectedElement = this.getEditorHolder()?.querySelector(elementXPath)
-                    if (!(selectedElement instanceof HTMLElement)) return
-
-                    //This is used to resize the height of the selection if users have different font sizes/screen zoom in/out s
-                    const { fontSize } = window.getComputedStyle(selectedElement)
-
-                    cursor.style.height = fontSize
-                    cursor.style.top = `${rect.top - parentElementRect.top}px`
-                    cursor.style.left = `${rect.left - parentElementRect.left}px`
-
-                    const { cursorClass } = this.config.overrideStyles ?? {}
-                    if (color) cursor.style.setProperty('--realtime-inline-cursor-color', color)
-                    if (cursorClass) cursor.classList.add(...cursorClass.split(' '))
-
-                    if (!editorHolder.contains(cursor)) editorHolder.insertAdjacentElement("beforeend", cursor)
+                    // Store the selection data
+                    this._remoteSelections.set(connectionId, {
+                        elementXPath,
+                        blockId,
+                        connectionId,
+                        anchorOffset,
+                        focusOffset,
+                        elementNodeIndex,
+                        color,
+                        selectionColor
+                    });
+                    
+                    // Render this specific selection
+                    this.renderRemoteSelection(connectionId);
                 }
                 break
             }
@@ -629,6 +624,7 @@ export default class GroupCollab<SocketMethodName extends string> {
                 const selections = this.getFakeSelections({ connectionId })
                 selections?.forEach(sel => sel.remove())
                 cursors?.forEach(cursor => cursor.remove())
+                this._remoteSelections.delete(connectionId);
                 this.lockedBlocks = this.lockedBlocks.filter(b => b.connectionId !== connectionId)
                 break
             }
@@ -1111,7 +1107,7 @@ export default class GroupCollab<SocketMethodName extends string> {
         // ex if left+width > currentWidth => needs to be broken down
 
         //TODO i have to wrap the content inside a span so i have the correct width 😓 maybe?
-        let currentRect = inputRects.at(0)
+        let currentRect = inputRects[0]
         let rectWidthsSum = 0
 
         // NOTE: when you have multiblock selection, the `Left` value indicates how much distance is between the TEXT and HtmlElement container
@@ -1122,6 +1118,78 @@ export default class GroupCollab<SocketMethodName extends string> {
         }
 
         return outputRects
+    }
+
+    /**
+     * Render a specific remote user's selection/cursor
+     */
+    private renderRemoteSelection(connectionId: string): void {
+        const selectionData = this._remoteSelections.get(connectionId);
+        if (!selectionData) return;
+
+        const { elementXPath, blockId, anchorOffset, focusOffset, elementNodeIndex, color, selectionColor } = selectionData;
+
+        const editorHolder = this.getEditorHolder();
+        if (!editorHolder) return;
+
+        const parentElement = editorHolder.querySelector(elementXPath);
+        if (!(parentElement instanceof HTMLElement)) return;
+
+        const nodeElement = parentElement.childNodes[elementNodeIndex];
+        if (!nodeElement) return;
+
+        const calculatedSelectionRects = this.getBoundingClientRectForSelection(nodeElement, anchorOffset, focusOffset);
+        const parentElementRect = editorHolder.getBoundingClientRect();
+
+        const isSelection = anchorOffset !== focusOffset;
+
+        // Remove old cursors/selections for this user
+        this.getFakeCursors({ connectionId })?.forEach(cursor => cursor.remove());
+        this.getFakeSelections({ connectionId })?.forEach(sel => sel.remove());
+
+        if (isSelection) {
+            // Render selection rectangles
+            for (let i = 0; i < calculatedSelectionRects.length; i++) {
+                const rect = calculatedSelectionRects.item(i);
+                if (!rect) continue;
+                const selectionElement = this.createSelectionElement({ blockId, connectionId });
+                selectionElement.style.top = `${rect.top - parentElementRect.top}px`;
+                selectionElement.style.left = `${rect.left - parentElementRect.left}px`;
+                selectionElement.style.width = `${rect.width}px`;
+                selectionElement.style.height = `${rect.height}px`;
+                if (selectionColor) selectionElement.style.setProperty('--realtime-inline-selection-color', selectionColor);
+                editorHolder.insertAdjacentElement("beforeend", selectionElement);
+            }
+            this.addBlockToIgnoreListUntilNextRender(blockId, 'block-changed');
+        } else {
+            // Render cursor
+            const cursor = this.createFakeCursor({ connectionId, blockId });
+            const rect = calculatedSelectionRects.item(0);
+            if (!rect) return;
+
+            const selectedElement = editorHolder.querySelector(elementXPath);
+            if (!(selectedElement instanceof HTMLElement)) return;
+
+            const { fontSize } = window.getComputedStyle(selectedElement);
+            cursor.style.height = fontSize;
+            cursor.style.top = `${rect.top - parentElementRect.top}px`;
+            cursor.style.left = `${rect.left - parentElementRect.left}px`;
+
+            const { cursorClass } = this.config.overrideStyles ?? {};
+            if (color) cursor.style.setProperty('--realtime-inline-cursor-color', color);
+            if (cursorClass) cursor.classList.add(...cursorClass.split(' '));
+
+            editorHolder.insertAdjacentElement("beforeend", cursor);
+        }
+    }
+
+    /**
+     * Rerender all remote selections and cursors (called on container resize)
+     */
+    private rerenderAllRemoteSelections(): void {
+        this._remoteSelections.forEach((_, connectionId) => {
+            this.renderRemoteSelection(connectionId);
+        });
     }
 
 

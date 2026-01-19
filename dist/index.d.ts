@@ -96,9 +96,11 @@ export default class GroupCollab<SocketMethodName extends string> {
     private _currentEditorLockingBlockId;
     private _lockedBlocks;
     private _customToolsInternalState;
+    private _remoteSelections;
     private ignoreEvents;
     private redactorObserver;
     private toolboxObserver;
+    private resizeObserver;
     private editorStyleElement;
     private throttledBlockChange?;
     private throttledInlineSelectionChange?;
@@ -158,5 +160,13 @@ export default class GroupCollab<SocketMethodName extends string> {
     private getNodeRelativeChildIndex;
     private applyNeccessaryChanges;
     private calculateRelativeRects;
+    /**
+     * Render a specific remote user's selection/cursor
+     */
+    private renderRemoteSelection;
+    /**
+     * Rerender all remote selections and cursors (called on container resize)
+     */
+    private rerenderAllRemoteSelections;
 }
 export {};
