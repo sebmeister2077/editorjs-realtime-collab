@@ -61,7 +61,6 @@ export type MessageData = MakeConditionalType<{
 }, typeof BlockMovedMutationType> | MakeConditionalType<{
     elementXPath: string;
     blockId: string;
-    rects: Rect[];
     containerWidth: number;
     connectionId: string;
     color: string;
@@ -78,7 +77,6 @@ export type MessageData = MakeConditionalType<{
     blockId: string;
     isSelected: boolean;
 }, typeof UserBlockSelectionChangeType> | MakeConditionalType<LockedBlock, typeof BlockLockedType> | MakeConditionalType<LockedBlock, typeof BlockUnlockedType>;
-type Rect = Pick<DOMRect, 'top' | 'left' | 'width'>;
 type LockedBlock = {
     blockId: string;
     connectionId: string;
@@ -135,7 +133,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private onEditorBlockEvent;
     private setupThrottledListeners;
     private debouncedBlockUnlocking;
-    private getFakeCursor;
+    private getFakeCursors;
     private createFakeCursor;
     private getFakeSelections;
     private createSelectionElement;
