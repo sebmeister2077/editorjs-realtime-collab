@@ -766,7 +766,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             const savedData = await target.save()
             if (!savedData) return
 
-            this.applyNeccessaryChanges(target, savedData);
+            this.applyNecessaryChanges(target, savedData);
             const socketData: MessageData = {
                 type: 'block-changed',
                 block: savedData,
@@ -1075,7 +1075,7 @@ export default class GroupCollab<SocketMethodName extends string> {
         return null
     }
 
-    private applyNeccessaryChanges(target: BlockAPI, savedData: SavedData) {
+    private applyNecessaryChanges(target: BlockAPI, savedData: SavedData) {
         switch (target.name) {
             case "table": {
                 const rows = target.holder.querySelectorAll(`.${this.EditorCSS.table.row}`);

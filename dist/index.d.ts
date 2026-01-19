@@ -158,7 +158,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private isNodeInsideOfEditor;
     private getElementXPath;
     private getNodeRelativeChildIndex;
-    private applyNeccessaryChanges;
+    private applyNecessaryChanges;
     private calculateRelativeRects;
     /**
      * Render a specific remote user's selection/cursor
