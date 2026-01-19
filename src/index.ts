@@ -118,14 +118,26 @@ type LockedBlock = { blockId: string; connectionId: string }
 type EditorEvents = keyof BlockMutationEventMap
 type Events = EditorEvents | typeof UserInlineSelectionChangeType | typeof UserBlockSelectionChangeType | typeof UserBlockDeletionChangeType | typeof BlockLockedType | typeof BlockUnlockedType
 type ToolData = { data: Object, tunes: Object };
+/**
+ * Data structure to store remote user's selection/cursor information
+ * for recalculation when container dimensions change
+ */
 type RemoteSelectionData = {
+    /** XPath to the element containing the selection */
     elementXPath: string;
+    /** ID of the block containing the selection */
     blockId: string;
+    /** ID of the remote user who owns this selection */
     connectionId: string;
+    /** Start position of the selection within the text node */
     anchorOffset: number;
+    /** End position of the selection within the text node */
     focusOffset: number;
+    /** Index of the text node within its parent element */
     elementNodeIndex: number;
+    /** Color for cursor display */
     color: string;
+    /** Color for text selection display */
     selectionColor: string;
 }
 
@@ -1127,6 +1139,8 @@ export default class GroupCollab<SocketMethodName extends string> {
 
     /**
      * Render a specific remote user's selection/cursor
+     * Recalculates positions based on current DOM state and container dimensions
+     * @param connectionId - The ID of the remote user whose selection should be rendered
      */
     private renderRemoteSelection(connectionId: string): void {
         const selectionData = this._remoteSelections.get(connectionId);
@@ -1189,7 +1203,9 @@ export default class GroupCollab<SocketMethodName extends string> {
     }
 
     /**
-     * Rerender all remote selections and cursors (called on container resize)
+     * Rerender all remote selections and cursors
+     * Called automatically when the editor container is resized
+     * Recalculates positions for all stored remote selections
      */
     private rerenderAllRemoteSelections(): void {
         this._remoteSelections.forEach((_, connectionId) => {

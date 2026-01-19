@@ -163,10 +163,14 @@ export default class GroupCollab<SocketMethodName extends string> {
     private calculateRelativeRects;
     /**
      * Render a specific remote user's selection/cursor
+     * Recalculates positions based on current DOM state and container dimensions
+     * @param connectionId - The ID of the remote user whose selection should be rendered
      */
     private renderRemoteSelection;
     /**
-     * Rerender all remote selections and cursors (called on container resize)
+     * Rerender all remote selections and cursors
+     * Called automatically when the editor container is resized
+     * Recalculates positions for all stored remote selections
      */
     private rerenderAllRemoteSelections;
 }
