@@ -64,6 +64,8 @@ export type MessageData = MakeConditionalType<{
     rects: Rect[];
     containerWidth: number;
     connectionId: string;
+    color: string;
+    selectionColor: string;
     elementNodeIndex: number;
     anchorOffset: number;
     focusOffset: number;

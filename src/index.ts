@@ -88,6 +88,9 @@ export type MessageData =
             containerWidth: number
 
             connectionId: string;
+            color: string;
+            selectionColor: string;
+
             //idk if i'll use these
             elementNodeIndex: number
             anchorOffset: number
@@ -402,6 +405,9 @@ export default class GroupCollab<SocketMethodName extends string> {
             focusOffset,
             elementNodeIndex,
             rects: finalRects,
+
+            color: this.config.cursor?.color ?? '',
+            selectionColor: this.config.cursor?.selectionColor ?? '',
             connectionId: this.socket.connectionId
         }
         this.socket.send(this.socketMethodName, data)
@@ -525,7 +531,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             }
 
             case 'inline-selection-change': {
-                const { type, rects, elementXPath, blockId, connectionId, anchorOffset, elementNodeIndex, focusOffset } = response
+                const { type, rects, elementXPath, blockId, connectionId, anchorOffset, elementNodeIndex, focusOffset, color, selectionColor } = response
                 const blockContent = this.getDOMBlockById(blockId)?.querySelector(`.${this.EditorCSS.blockContent}`)
                 if (!blockContent || !rects.length) return
 
@@ -536,6 +542,9 @@ export default class GroupCollab<SocketMethodName extends string> {
                 if (isReset) {
                     cursor?.remove()
                 }
+
+                // remove existing selection for this user
+                this.getFakeSelections({ connectionId })?.forEach((sel) => sel.remove())
                 // console.log(response)
                 if (isSelection) {
                     const editorHolder = this.getEditorHolder()
@@ -543,12 +552,10 @@ export default class GroupCollab<SocketMethodName extends string> {
                     const parentElement = editorHolder.querySelector(elementXPath)
                     if (!(parentElement instanceof HTMLElement)) return
 
-                    this.getFakeSelections({ blockId })?.forEach((sel) => sel.remove())
                     const nodeElement = parentElement.childNodes[elementNodeIndex];
                     if (!nodeElement) return
 
                     const calculatedSelectionRects = this.getBoundingClientRectForSelection(nodeElement, anchorOffset, focusOffset)
-                    const { selectionColor } = this.config.cursor ?? {}
                     // Adjust rects to be relative to editorHolder
                     const parentElementRect = editorHolder.getBoundingClientRect()
 
@@ -566,8 +573,6 @@ export default class GroupCollab<SocketMethodName extends string> {
                         this.addBlockToIgnoreListUntilNextRender(blockId, 'block-changed');
                     }
                 } else {
-                    // remove existing selection for this user
-                    this.getFakeSelections({ connectionId })?.forEach((sel) => sel.remove())
                     if (!cursor) cursor = this.createFakeCursor(connectionId)
                     else {
                         // reset animation state
@@ -591,7 +596,6 @@ export default class GroupCollab<SocketMethodName extends string> {
 
 
                     const { cursorClass } = this.config.overrideStyles ?? {}
-                    const { color } = this.config.cursor ?? {}
                     if (color) cursor.style.setProperty('--realtime-inline-cursor-color', color)
                     if (cursorClass) cursor.classList.add(...cursorClass.split(' '))
 
