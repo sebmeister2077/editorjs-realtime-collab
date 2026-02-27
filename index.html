@@ -116,7 +116,7 @@
                 const analytics = getAnalytics(app)
 
                 let lastSeenMessageTimestamp = Date.now()
-                const subscribers = new Map()
+                const subscribers = []
                 const userId = user ? user.uid : crypto.randomUUID()
                 const db = getDatabase(app)
                 // cleanupOldMessages(db)
@@ -157,38 +157,36 @@
                     toastr.info('Online users:' + onlineUsers.length)
                 })
                 const socket = {
-                    on: (name, cb) => {
+                    on: (cb) => {
                         const subscriber = onChildAdded(messagesRef, (snapshot) => {
                             const msg = snapshot.val()
 
                             if (msg.senderId === userId) return // ignore own messages
-                            if (msg.eventName !== name) return // ignore other events for this listener
 
                             const deserializedPayload = deserializeArrays(msg.payload)
                             cb(deserializedPayload)
                         })
-                        const existingSubscribers = subscribers.get(name) || []
+                        const existingSubscribers = subscribers
                         existingSubscribers.push(subscriber)
-                        subscribers.set(name, existingSubscribers)
+                        subscribers = existingSubscribers
                     },
-                    send: (name, data = null) => {
+                    send: (data = null) => {
                         const serializedData = serializeArrays(data)
                         const dbMessage = {
                             senderId: userId,
                             timestamp: Date.now(),
-                            eventName: name,
                             payload: serializedData,
                         }
                         push(messagesAddRef, dbMessage).catch((error) => {
                             console.log('Error sending message', error, dbMessage)
                         })
                     },
-                    off: (name) => {
-                        const existingSubscribers = subscribers.get(name) || []
+                    off: () => {
+                        const existingSubscribers = subscribers
                         existingSubscribers.forEach((unsubscribe) => {
                             unsubscribe() // Detach the listener
                         })
-                        subscribers.delete(name)
+                        subscribers = []
                     },
                 }
 
