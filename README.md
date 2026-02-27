@@ -61,10 +61,10 @@ The plugin does **not** depend on Socket.IO, SignalR, or any specific library.
 Your socket only needs to implement this interface:
 
 ```ts
-interface NeededSocketFields<SocketEventName extends string> {
-  send(event: SocketEventName, data: MessageData): void
-  on(event: SocketEventName, callback: (data: MessageData) => void): void
-  off(event: SocketEventName): void
+interface NeededSocketFields {
+    send(data: MessageData): void
+    on(callback: (data: MessageData) => void): void
+    off(): void
   connectionId: string
 }
 
@@ -84,7 +84,6 @@ interface NeededSocketFields<SocketEventName extends string> {
 new RealtimeCollabPlugin({
   editor,
   socket,
-  socketMethodName?,
   blockChangeThrottleDelay?,
   blockLockDebounceTime?,
   cursor?,
@@ -100,7 +99,6 @@ new RealtimeCollabPlugin({
 | ------------------------            | ----------------------------------------------- | -------------------------------------------------------- | -------------------- |
 | editor                              | `EditorJS`                                      | The editorJs instance you want to listen to              | `required*`          |
 | socket                              | `INeededSocketFields`                           | The socket instance (or custom method bingings)          | `required*`          |
-| socketMethodName                    | `string`                                        | The event name to use when communicating between sockets | `editorjs-update`    |
 | blockChangeThrottleDelay            | `number`                                        | Delay to throttle block changes (ms).                    | `300`                |
 | blockLockDebounceTime               | `number`                                        | Delay to debounce block unlocking (ms).                  | `1500`               |
 | toolsWithDataCheck                  | `string[]`                                      | Tools that need data comparison before locking           | `["table"]`          |
@@ -352,7 +350,6 @@ You can override any of them via `overrideStyles` or your own CSS.
 
 - ⚠️ `connectionId` must be stable for a user session
 
-- ⚠️ Clients must all use the same `socketMethodName`
 
 - ✅ Editor content stays consistent even with rapid concurrent edits
 

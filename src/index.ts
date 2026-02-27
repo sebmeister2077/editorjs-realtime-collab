@@ -18,14 +18,9 @@ const UserDisconnectedType = 'user-disconnected'
 const BlockLockedType = 'block-locked'
 const BlockUnlockedType = 'block-unlocked'
 
-export type GroupCollabConfigOptions<SocketMethodName extends string> = {
+export type GroupCollabConfigOptions = {
     editor: EditorJS
-    socket: INeededSocketFields<SocketMethodName>
-    /**
-     * Name of the socket event.
-     * @default 'editorjs-update'
-     */
-    socketMethodName?: SocketMethodName
+    socket: INeededSocketFields
 } & Partial<LocalConfig>
 
 type LocalConfig = {
@@ -119,18 +114,17 @@ type EditorEvents = keyof BlockMutationEventMap
 type Events = EditorEvents | typeof UserInlineSelectionChangeType | typeof UserBlockSelectionChangeType | typeof UserBlockDeletionChangeType | typeof BlockLockedType | typeof BlockUnlockedType
 type ToolData = { data: Object, tunes: Object };
 
-export type INeededSocketFields<SocketMethodName extends string> = {
-    send(socketMethod: SocketMethodName, data: MessageData): void
-    on(socketMethod: SocketMethodName, callback: (data: MessageData) => void): void
-    off(socketMethod: SocketMethodName): void;
+export type INeededSocketFields = {
+    send(data: MessageData): void
+    on(callback: (data: MessageData) => void): void
+    off(): void;
     connectionId: string;
 }
 
-export default class GroupCollab<SocketMethodName extends string> {
+export default class GroupCollab {
     // Config
     private editor: EditorJS
-    private socket: INeededSocketFields<SocketMethodName>
-    private socketMethodName: SocketMethodName
+    private socket: INeededSocketFields
     private config: LocalConfig
 
 
@@ -155,14 +149,14 @@ export default class GroupCollab<SocketMethodName extends string> {
     private inlineFakeCursorAttributeName = 'data-realtime-fake-inline-cursor'
     private inlineFakeSelectionAttributeName = 'data-realtime-fake-inline-selection'
     private connectionIdAttributeName = 'data-realtime-connection-id'
-    public constructor({ editor, socket, socketMethodName, ...config }: GroupCollabConfigOptions<SocketMethodName>) {
+    public constructor({ editor, socket, ...config }: GroupCollabConfigOptions) {
         this.editor = editor
         this.socket = socket
         if (!this.socket.connectionId) {
             console.error("{connectionId} is not set for EditorJSGroupCollab plugin. Some features might not work")
             this.socket.connectionId = "random-" + crypto.randomUUID();
         }
-        this.socketMethodName = socketMethodName ?? ('editorjs-update' as SocketMethodName)
+
 
         const defaultConfig: LocalConfig = {
             blockChangeThrottleDelay: 300,
@@ -213,13 +207,13 @@ export default class GroupCollab<SocketMethodName extends string> {
      * Remove event listeners on socket and editor
      */
     public unlisten() {
-        this.socket.off(this.socketMethodName)
+        this.socket.off()
         this.editor.off(this.editorBlockEvent, this.onEditorBlockEvent)
         this.redactorObserver.disconnect()
         this.toolboxObserver.disconnect()
         document.removeEventListener('selectionchange', this.throttledInlineSelectionChange!)
         window.removeEventListener("beforeunload", this.onDisconnect, { capture: true })
-        this.socket.send(this.socketMethodName, { type: UserDisconnectedType, connectionId: this.socket.connectionId })
+        this.socket.send({ type: UserDisconnectedType, connectionId: this.socket.connectionId })
 
         // remove cursors, selections and block lockings
         this.getFakeCursors({})?.forEach(cursor => cursor.remove())
@@ -232,7 +226,7 @@ export default class GroupCollab<SocketMethodName extends string> {
      * Start listening for events.
      */
     public listen() {
-        this.socket.on(this.socketMethodName, this.onReceiveChange)
+        this.socket.on(this.onReceiveChange)
         this.editor.on(this.editorBlockEvent, this.onEditorBlockEvent)
         const redactor = this.getRedactor();
         if (!redactor) {
@@ -308,7 +302,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             if (isSelected) this.localBlockStates[blockId].add('selected')
             else this.localBlockStates[blockId].delete('selected')
 
-            this.socket.send(this.socketMethodName, {
+            this.socket.send({
                 type: UserBlockSelectionChangeType,
                 blockId,
                 isSelected,
@@ -355,7 +349,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             if (isDeletePending) this.localBlockStates[blockId].add('deleting')
             else this.localBlockStates[blockId].delete('deleting')
 
-            this.socket.send(this.socketMethodName, {
+            this.socket.send({
                 type: UserBlockDeletionChangeType,
                 blockId,
                 isDeletePending
@@ -415,11 +409,11 @@ export default class GroupCollab<SocketMethodName extends string> {
             selectionColor: this.config.cursor?.selectionColor ?? '',
             connectionId: this.socket.connectionId
         }
-        this.socket.send(this.socketMethodName, data)
+        this.socket.send(data)
     }
 
     private onDisconnect = (e: Event) => {
-        this.socket.send(this.socketMethodName, { type: UserDisconnectedType, connectionId: this.socket.connectionId })
+        this.socket.send({ type: UserDisconnectedType, connectionId: this.socket.connectionId })
     }
 
     //#region Receive Changes Handling
@@ -713,7 +707,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             }
             else {
                 this._currentEditorLockingBlockId = targetId;
-                this.socket.send(this.socketMethodName, { type: BlockLockedType, blockId: targetId, connectionId: this.socket.connectionId })
+                this.socket.send({ type: BlockLockedType, blockId: targetId, connectionId: this.socket.connectionId })
 
                 // Remove any other user's cursor/selection in this block
                 this.getFakeCursors({ blockId: targetId })?.forEach(cursor => cursor.remove())
@@ -757,7 +751,7 @@ export default class GroupCollab<SocketMethodName extends string> {
                 //at this point the blocks already switched places
                 socketData.toBlockId = this.editor.blocks.getBlockByIndex(fromIndex)?.id
             }
-            this.socket.send(this.socketMethodName, socketData as MessageData)
+            this.socket.send(socketData as MessageData)
         }, 0)
     }
 
@@ -783,7 +777,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             }
 
             if (!this.isListening) return
-            this.socket.send(this.socketMethodName, socketData)
+            this.socket.send(socketData)
             this.addBlockToIgnoreListUntilNextRender(targetId, 'block-changed')
         })
     }
@@ -795,7 +789,7 @@ export default class GroupCollab<SocketMethodName extends string> {
             return;
         }
         const newDebouncedFunc = debounce(this.config.blockLockDebounceTime, (bId: string, connId: string) => {
-            this.socket.send(this.socketMethodName, { type: BlockUnlockedType, blockId: bId, connectionId: connId })
+            this.socket.send({ type: BlockUnlockedType, blockId: bId, connectionId: connId })
             if (this.currentLockedBlockId === bId)
                 this._currentEditorLockingBlockId = null;
             delete this._debouncedBlockUnlockingsMap?.[bId];

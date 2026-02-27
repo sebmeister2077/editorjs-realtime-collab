@@ -8,14 +8,9 @@ declare const UserBlockDeletionChangeType = "block-deletion-change";
 declare const UserDisconnectedType = "user-disconnected";
 declare const BlockLockedType = "block-locked";
 declare const BlockUnlockedType = "block-unlocked";
-export type GroupCollabConfigOptions<SocketMethodName extends string> = {
+export type GroupCollabConfigOptions = {
     editor: EditorJS;
-    socket: INeededSocketFields<SocketMethodName>;
-    /**
-     * Name of the socket event.
-     * @default 'editorjs-update'
-     */
-    socketMethodName?: SocketMethodName;
+    socket: INeededSocketFields;
 } & Partial<LocalConfig>;
 type LocalConfig = {
     /**
@@ -81,16 +76,15 @@ type LockedBlock = {
     blockId: string;
     connectionId: string;
 };
-export type INeededSocketFields<SocketMethodName extends string> = {
-    send(socketMethod: SocketMethodName, data: MessageData): void;
-    on(socketMethod: SocketMethodName, callback: (data: MessageData) => void): void;
-    off(socketMethod: SocketMethodName): void;
+export type INeededSocketFields = {
+    send(data: MessageData): void;
+    on(callback: (data: MessageData) => void): void;
+    off(): void;
     connectionId: string;
 };
-export default class GroupCollab<SocketMethodName extends string> {
+export default class GroupCollab {
     private editor;
     private socket;
-    private socketMethodName;
     private config;
     private _isListening;
     private _currentEditorLockingBlockId;
@@ -110,7 +104,7 @@ export default class GroupCollab<SocketMethodName extends string> {
     private inlineFakeCursorAttributeName;
     private inlineFakeSelectionAttributeName;
     private connectionIdAttributeName;
-    constructor({ editor, socket, socketMethodName, ...config }: GroupCollabConfigOptions<SocketMethodName>);
+    constructor({ editor, socket, ...config }: GroupCollabConfigOptions);
     get isListening(): boolean;
     get lockedBlocks(): LockedBlock[];
     set lockedBlocks(value: LockedBlock[]);
