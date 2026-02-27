@@ -221,6 +221,11 @@ export default class GroupCollab<SocketMethodName extends string> {
         window.removeEventListener("beforeunload", this.onDisconnect, { capture: true })
         this.socket.send(this.socketMethodName, { type: UserDisconnectedType, connectionId: this.socket.connectionId })
 
+        // remove cursors, selections and block lockings
+        this.getFakeCursors({})?.forEach(cursor => cursor.remove())
+        this.getFakeSelections({})?.forEach(selection => selection.remove())
+        this.lockedBlocks = []
+
         this._isListening = false
     }
     /**
@@ -805,10 +810,11 @@ export default class GroupCollab<SocketMethodName extends string> {
 
     //#region DOM & utils
     private getFakeCursors({ blockId, connectionId }: Partial<Record<"blockId" | "connectionId", string>>) {
-        if (!blockId && !connectionId) return null
+        const editorHolder = this.getEditorHolder()
+        if (!blockId && !connectionId) return editorHolder?.querySelectorAll(`[${this.inlineFakeCursorAttributeName}]`)
         const connectionQuery = connectionId ? `[${this.connectionIdAttributeName}='${connectionId}']` : ""
         const blockIdQuery = blockId ? `[${this.inlineFakeCursorAttributeName}='${blockId}']` : "";
-        const domCursors = this.getEditorHolder()?.querySelectorAll(
+        const domCursors = editorHolder?.querySelectorAll(
             `${blockIdQuery}${connectionQuery}`,
         )
         return domCursors

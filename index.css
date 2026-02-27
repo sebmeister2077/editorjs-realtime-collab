@@ -5,6 +5,13 @@
   #holder {
       background-color: #f9fafb;
       border-radius: 12px;
+      margin: 10px;
+  }
+
+  #holder2 {
+      background-color: #f9fafb;
+      border-radius: 12px;
+      margin: 10px;
   }
 
   .throttle {
