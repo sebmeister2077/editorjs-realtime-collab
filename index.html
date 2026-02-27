@@ -36,6 +36,7 @@
         </div>
         <script type="module">
             import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js'
+            import { initializeAppCheck, ReCaptchaV3Provider } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-app-check.js'
             import {
                 getAuth,
                 signInAnonymously,
@@ -79,9 +80,15 @@
             let throttleTimeoutValue = Number(document.getElementById('throttleDelay').value) ?? 300
 
             ;(async () => {
-                const { default: firebaseConfig } = await import('./config.json', { with: { type: 'json' } })
+                const {
+                    default: { something_you_cant_find_with_grep, ...firebaseConfig },
+                } = await import('./config.json', { with: { type: 'json' } })
 
                 const app = initializeApp(firebaseConfig)
+                const appCheck = initializeAppCheck(app, {
+                    provider: new ReCaptchaV3Provider(something_you_cant_find_with_grep),
+                    isTokenAutoRefreshEnabled: true,
+                })
                 const auth = getAuth(app)
                 auth.setPersistence(browserSessionPersistence)
                 let user = null
