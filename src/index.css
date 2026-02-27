@@ -67,6 +67,12 @@
     opacity: 0.6;
 }
 
+.cdx-realtime-block--locked [contenteditable] {
+    overflow-wrap: break-word;
+    line-break: after-white-space;
+    -webkit-line-break: after-white-space;
+}
+
 
 .cdx-realtime-inline-selection {
     position: absolute;

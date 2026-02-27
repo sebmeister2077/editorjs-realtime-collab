@@ -370,25 +370,9 @@ export default class GroupCollab {
         const { parentElement } = anchorNode
         if (!parentElement) return
 
-        const range = selection.getRangeAt(0)
-        const childRects: DOMRect[] = []
-        //i need this if i want to use inline selection
-        const clientRects = range.getClientRects()
-        for (let i = 0; i < clientRects.length; i++) {
-            const item = clientRects.item(i)
-            if (item) childRects.push(item)
-        }
-
         const contentAndBlockId = this.getContentAndBlockIdFromNode(anchorNode)
         if (!contentAndBlockId) return
         const { blockId, contentElement } = contentAndBlockId
-        const parentRect = contentElement.getBoundingClientRect()
-
-        const finalRects: Pick<DOMRect, 'top' | 'left' | 'width'>[] = childRects.map((childRect) => ({
-            top: childRect.top - parentRect.top,
-            left: childRect.left - parentRect.left,
-            width: childRect.width,
-        }))
 
         const elementNodeIndex = this.getNodeRelativeChildIndex(anchorNode)
         if (elementNodeIndex === null) return
@@ -409,7 +393,15 @@ export default class GroupCollab {
             selectionColor: this.config.cursor?.selectionColor ?? '',
             connectionId: this.socket.connectionId
         }
-        this.socket.send(data)
+        // this makes blocks be at least up to date before trying to set the cursor (which uses selections on actual dom elements)
+        const blockIsLocked = blockId === this._currentEditorLockingBlockId
+        if (!blockIsLocked) {
+            this.socket.send(data);
+            return;
+        }
+        setTimeout(() => {
+            this.socket.send(data)
+        }, 40)
     }
 
     private onDisconnect = (e: Event) => {
