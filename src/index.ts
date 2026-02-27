@@ -417,17 +417,7 @@ export default class GroupCollab {
     }
 
     //#region Receive Changes Handling
-    /**
-     * Handle incoming changes from other editors
-     * @param response Response from other editor(s)
-     * @param t @deprecated Legacy parameter for backward compatibility. No longer used. And will be removed in furute updates
-     */
-    private onReceiveChange = (response: MessageData, t?: never) => {
-        //previous implementation has 1 extra parameter which has been removed
-        if (typeof (response as any) === "string") {
-            console.error("Update your socket and remove socket method name (first parameter).")
-            response = t as any as MessageData
-        }
+    private onReceiveChange = (response: MessageData) => {
         switch (response.type) {
             case 'block-added': {
                 const { index, block } = response

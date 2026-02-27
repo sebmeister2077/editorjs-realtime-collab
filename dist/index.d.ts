@@ -123,11 +123,6 @@ export default class GroupCollab {
     private handleToolboxMutation;
     private onInlineSelectionChange;
     private onDisconnect;
-    /**
-     * Handle incoming changes from other editors
-     * @param response Response from other editor(s)
-     * @param t @deprecated Legacy parameter for backward compatibility. No longer used. And will be removed in furute updates
-     */
     private onReceiveChange;
     private onEditorBlockEvent;
     private setupThrottledListeners;
