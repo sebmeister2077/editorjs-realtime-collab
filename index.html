@@ -116,7 +116,7 @@
                 const analytics = getAnalytics(app)
 
                 let lastSeenMessageTimestamp = Date.now()
-                let subscribers = []
+                const subscribers = new Map()
                 const userId = user ? user.uid : crypto.randomUUID()
                 const db = getDatabase(app)
                 // cleanupOldMessages(db)
@@ -157,24 +157,54 @@
                     toastr.info('Online users:' + onlineUsers.length)
                 })
                 const socket = {
-                    on: (cb) => {
+                    onName: (name, cb) => {
                         const subscriber = onChildAdded(messagesRef, (snapshot) => {
                             const msg = snapshot.val()
 
                             if (msg.senderId === userId) return // ignore own messages
+                            if (msg.eventName !== name) return // ignore other events for this listener
 
                             const deserializedPayload = deserializeArrays(msg.payload)
                             cb(deserializedPayload)
                         })
-                        const existingSubscribers = subscribers
+                        const existingSubscribers = subscribers.get(name) || []
                         existingSubscribers.push(subscriber)
-                        subscribers = existingSubscribers
+                        subscribers.set(name, existingSubscribers)
                     },
-                    send: (data = null) => {
+                    on: (cb) => {
+                        const name = 'editorjs-update'
+                        const subscriber = onChildAdded(messagesRef, (snapshot) => {
+                            const msg = snapshot.val()
+
+                            if (msg.senderId === userId) return // ignore own messages
+                            if (msg.eventName !== name) return // ignore other events for this listener
+
+                            const deserializedPayload = deserializeArrays(msg.payload)
+                            cb(deserializedPayload)
+                        })
+                        const existingSubscribers = subscribers.get(name) || []
+                        existingSubscribers.push(subscriber)
+                        subscribers.set(name, existingSubscribers)
+                    },
+                    sendName: (name, data = null) => {
                         const serializedData = serializeArrays(data)
                         const dbMessage = {
                             senderId: userId,
                             timestamp: Date.now(),
+                            eventName: name,
+                            payload: serializedData,
+                        }
+                        push(messagesAddRef, dbMessage).catch((error) => {
+                            console.log('Error sending message', error, dbMessage)
+                        })
+                    },
+                    send: (data = null) => {
+                        const name = 'editorjs-update'
+                        const serializedData = serializeArrays(data)
+                        const dbMessage = {
+                            senderId: userId,
+                            timestamp: Date.now(),
+                            eventName: name,
                             payload: serializedData,
                         }
                         push(messagesAddRef, dbMessage).catch((error) => {
@@ -182,11 +212,12 @@
                         })
                     },
                     off: () => {
-                        const existingSubscribers = subscribers
+                        const name = 'editorjs-update'
+                        const existingSubscribers = subscribers.get(name) || []
                         existingSubscribers.forEach((unsubscribe) => {
                             unsubscribe() // Detach the listener
                         })
-                        subscribers = []
+                        subscribers.delete(name)
                     },
                 }
 
@@ -207,14 +238,14 @@
                 const receiveEvent = 'receive-all-data'
 
                 let isEditorInstantiated = false
-                socket.on(receiveEvent, (res) => {
+                socket.onName(receiveEvent, (res) => {
                     if (timeout) clearTimeout(timeout)
                     throttleTimeoutValue = res.throttleTimeout ?? 300
                     initEditorWithOrWithoutData(res.data)
                 })
 
                 setTimeout(() => {
-                    socket.send(askEvent)
+                    socket.sendName(askEvent)
                 }, 200)
 
                 timeout = setTimeout(initEditorWithOrWithoutData, askTimeout)
@@ -263,10 +294,10 @@
 
                     await editor.isReady
                     //sync editor with other online users
-                    socket.on(askEvent, () => {
+                    socket.onName(askEvent, () => {
                         toastr.info('saving and sharing data to newly connected user')
                         editor.save().then((data) => {
-                            socket.send(receiveEvent, { data, throttleTimeoutValue })
+                            socket.sendName(receiveEvent, { data, throttleTimeoutValue })
                         })
                     })
 
@@ -280,13 +311,13 @@
 
                         groupCollab.unlisten()
 
-                        socket.send('throttle-timeout-change', { newTimeout: throttleTimeoutValue })
+                        socket.sendName('throttle-timeout-change', { newTimeout: throttleTimeoutValue })
                         groupCollab = setupPlugin()
 
                         groupCollab.listen()
                     })
 
-                    socket.on('throttle-timeout-change', (data) => {
+                    socket.onName('throttle-timeout-change', (data) => {
                         const newTimeout = data.newTimeout
                         if (newTimeout == throttleTimeoutValue || typeof throttleTimeoutValue !== 'number') return
                         throttleTimeoutValue = newTimeout
