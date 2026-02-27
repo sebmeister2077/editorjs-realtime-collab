@@ -116,7 +116,7 @@
                 const analytics = getAnalytics(app)
 
                 let lastSeenMessageTimestamp = Date.now()
-                const subscribers = []
+                let subscribers = []
                 const userId = user ? user.uid : crypto.randomUUID()
                 const db = getDatabase(app)
                 // cleanupOldMessages(db)
