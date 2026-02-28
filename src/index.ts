@@ -11,10 +11,15 @@ import { type PickFromConditionalType, type MakeConditionalType } from './Utilit
 import { throttle, debounce } from 'throttle-debounce'
 import './index.css'
 
+
+const UserInlineSelectionAsk = 'inline-selection-request'
 const UserInlineSelectionChangeType = 'inline-selection-change'
+
 const UserBlockSelectionChangeType = 'block-selection-change'
 const UserBlockDeletionChangeType = 'block-deletion-change'
+
 const UserDisconnectedType = 'user-disconnected'
+
 const BlockLockedType = 'block-locked'
 const BlockUnlockedType = 'block-unlocked'
 
@@ -76,28 +81,34 @@ export type MessageData =
         typeof BlockMovedMutationType
     >
     | MakeConditionalType<
-        {
-            elementXPath: string
-            blockId: string
-            // rects: Rect[]
-            containerWidth: number
-
-            connectionId: string;
-            color: string;
-            selectionColor: string;
-
-            //idk if i'll use these
-            elementNodeIndex: number
-            anchorOffset: number
-            focusOffset: number
-        },
+        UserInlineSelectionData,
         typeof UserInlineSelectionChangeType
     >
+    | MakeConditionalType<{}, typeof UserInlineSelectionAsk>
+
     | MakeConditionalType<{ connectionId: string }, typeof UserDisconnectedType>
+
     | MakeConditionalType<{ blockId: string; isDeletePending: boolean }, typeof UserBlockDeletionChangeType>
     | MakeConditionalType<{ blockId: string; isSelected: boolean }, typeof UserBlockSelectionChangeType>
+
     | MakeConditionalType<LockedBlock, typeof BlockLockedType>
     | MakeConditionalType<LockedBlock, typeof BlockUnlockedType>
+
+type UserInlineSelectionData = {
+    elementXPath: string
+    blockId: string
+    // rects: Rect[]
+    containerWidth: number
+
+    connectionId: string;
+    color: string;
+    selectionColor: string;
+
+    //idk if i'll use these
+    elementNodeIndex: number
+    anchorOffset: number
+    focusOffset: number
+}
 type Rect = Pick<DOMRect, 'top' | 'left' | 'width'>
 type PossibleEventDetails = {
     target: BlockAPI
@@ -139,7 +150,7 @@ export default class GroupCollab {
     private toolboxObserver: MutationObserver;
     private editorStyleElement: HTMLStyleElement;
     private throttledBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
-    private throttledInlineSelectionChange?: throttle<(e: Event) => void> = undefined
+    private throttledInlineSelectionChange?: throttle<() => void> = undefined
     private _debouncedBlockUnlockingsMap: Record<string, debounce<(blockId: string, connectionId: string) => void>> = {};
     private localBlockStates: Record<string, Set<'selected' | 'focused' | "deleting">> = {}
 
@@ -249,10 +260,24 @@ export default class GroupCollab {
             })
         else
             console.error("Could not initialize toolbox observer.")
-        document.addEventListener('selectionchange', this.throttledInlineSelectionChange!)
+        if (this.throttledInlineSelectionChange)
+            document.addEventListener('selectionchange', this.throttledInlineSelectionChange)
         window.addEventListener("beforeunload", this.onDisconnect, { capture: true })
 
         this._isListening = true
+
+        this.syncExternalCursors();
+    }
+
+    /**
+     * Manually trigger cursor syncronization for other users. This is already called when a new user joins and wants to see other users' cursors, but can be useful in other edge cases as well.
+     */
+    public syncExternalCursors() {
+        if (!this.isListening) return;
+
+        this.getFakeCursors({})?.forEach(cursor => cursor.remove())
+        this.getFakeSelections({})?.forEach(selection => selection.remove())
+        this.socket.send({ type: UserInlineSelectionAsk })
     }
 
     //#endregion
@@ -358,41 +383,10 @@ export default class GroupCollab {
     }
 
     //#region Inline Selection Change Handling
-    private onInlineSelectionChange = (e: Event) => {
-        const selection = document.getSelection()
-        if (!selection) return
-
-        const { anchorNode, anchorOffset, focusOffset } = selection
-        if (!anchorNode) return
-
-        if (!this.isNodeInsideOfEditor(anchorNode)) return
-
-        const { parentElement } = anchorNode
-        if (!parentElement) return
-
-        const contentAndBlockId = this.getContentAndBlockIdFromNode(anchorNode)
-        if (!contentAndBlockId) return
-        const { blockId, contentElement } = contentAndBlockId
-
-        const elementNodeIndex = this.getNodeRelativeChildIndex(anchorNode)
-        if (elementNodeIndex === null) return
-        const path = this.getElementXPath(parentElement)
-        const containerWidth = contentElement.clientWidth
-
-        const data: PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType> = {
-            type: UserInlineSelectionChangeType,
-            blockId,
-            elementXPath: path,
-            containerWidth,
-            anchorOffset,
-            focusOffset,
-            elementNodeIndex,
-            // rects: finalRects,
-
-            color: this.config.cursor?.color ?? '',
-            selectionColor: this.config.cursor?.selectionColor ?? '',
-            connectionId: this.socket.connectionId
-        }
+    private onInlineSelectionChange = (e?: Event) => {
+        const data = this.getSelectionAsData()
+        if (!data) return
+        const blockId = data.blockId
         // this makes blocks be at least up to date before trying to set the cursor (which uses selections on actual dom elements)
         const blockIsLocked = blockId === this._currentEditorLockingBlockId
         if (!blockIsLocked) {
@@ -614,6 +608,11 @@ export default class GroupCollab {
                 break
             }
 
+            case UserInlineSelectionAsk: {
+                this.onInlineSelectionChange();
+                break;
+            }
+
             case UserDisconnectedType: {
                 const { connectionId } = response
                 const cursors = this.getFakeCursors({ connectionId })
@@ -714,7 +713,7 @@ export default class GroupCollab {
                 if (!('index' in otherData) || typeof otherData.index !== 'number') return
                 this.throttledBlockChange?.(target, otherData.index ?? 0)
                 setTimeout(() => {
-                    this.throttledInlineSelectionChange?.(new CustomEvent('selectionchange'))
+                    this.throttledInlineSelectionChange?.()
                 }, 0)
                 return
             }
@@ -830,6 +829,45 @@ export default class GroupCollab {
             selection.classList.add(this.config.overrideStyles.inlineSelectionClass)
 
         return selection
+    }
+
+    private getSelectionAsData(): PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType> | null {
+        const selection = document.getSelection()
+        if (!selection) return null
+
+        const { anchorNode, anchorOffset, focusOffset } = selection
+        if (!anchorNode) return null
+
+        if (!this.isNodeInsideOfEditor(anchorNode)) return null
+
+        const { parentElement } = anchorNode
+        if (!parentElement) return null
+
+        const contentAndBlockId = this.getContentAndBlockIdFromNode(anchorNode)
+        if (!contentAndBlockId) return null
+        const { blockId, contentElement } = contentAndBlockId
+
+        const elementNodeIndex = this.getNodeRelativeChildIndex(anchorNode)
+        if (elementNodeIndex === null) return null
+        const path = this.getElementXPath(parentElement)
+        const containerWidth = contentElement.clientWidth
+
+        const data: PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType> = {
+            type: UserInlineSelectionChangeType,
+            blockId,
+            elementXPath: path,
+            containerWidth,
+            anchorOffset,
+            focusOffset,
+            elementNodeIndex,
+            // rects: finalRects,
+
+            color: this.config.cursor?.color ?? '',
+            selectionColor: this.config.cursor?.selectionColor ?? '',
+            connectionId: this.socket.connectionId
+        }
+
+        return data
     }
 
     private validateEventDetail(ev: CustomEvent): ev is CustomEvent<PossibleEventDetails> {

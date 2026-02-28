@@ -2,6 +2,7 @@ import EditorJS, { type BlockAddedMutationType, type BlockRemovedMutationType, t
 import { type SavedData } from '@editorjs/editorjs/types/data-formats/block-data';
 import { type MakeConditionalType } from './UtilityTypes';
 import './index.css';
+declare const UserInlineSelectionAsk = "inline-selection-request";
 declare const UserInlineSelectionChangeType = "inline-selection-change";
 declare const UserBlockSelectionChangeType = "block-selection-change";
 declare const UserBlockDeletionChangeType = "block-deletion-change";
@@ -53,7 +54,16 @@ export type MessageData = MakeConditionalType<{
     fromBlockId: string;
     toBlockIndex: number;
     toBlockId: string;
-}, typeof BlockMovedMutationType> | MakeConditionalType<{
+}, typeof BlockMovedMutationType> | MakeConditionalType<UserInlineSelectionData, typeof UserInlineSelectionChangeType> | MakeConditionalType<{}, typeof UserInlineSelectionAsk> | MakeConditionalType<{
+    connectionId: string;
+}, typeof UserDisconnectedType> | MakeConditionalType<{
+    blockId: string;
+    isDeletePending: boolean;
+}, typeof UserBlockDeletionChangeType> | MakeConditionalType<{
+    blockId: string;
+    isSelected: boolean;
+}, typeof UserBlockSelectionChangeType> | MakeConditionalType<LockedBlock, typeof BlockLockedType> | MakeConditionalType<LockedBlock, typeof BlockUnlockedType>;
+type UserInlineSelectionData = {
     elementXPath: string;
     blockId: string;
     containerWidth: number;
@@ -63,15 +73,7 @@ export type MessageData = MakeConditionalType<{
     elementNodeIndex: number;
     anchorOffset: number;
     focusOffset: number;
-}, typeof UserInlineSelectionChangeType> | MakeConditionalType<{
-    connectionId: string;
-}, typeof UserDisconnectedType> | MakeConditionalType<{
-    blockId: string;
-    isDeletePending: boolean;
-}, typeof UserBlockDeletionChangeType> | MakeConditionalType<{
-    blockId: string;
-    isSelected: boolean;
-}, typeof UserBlockSelectionChangeType> | MakeConditionalType<LockedBlock, typeof BlockLockedType> | MakeConditionalType<LockedBlock, typeof BlockUnlockedType>;
+};
 type LockedBlock = {
     blockId: string;
     connectionId: string;
@@ -117,6 +119,10 @@ export default class GroupCollab {
      * Start listening for events.
      */
     listen(): void;
+    /**
+     * Manually trigger cursor syncronization for other users. This is already called when a new user joins and wants to see other users' cursors, but can be useful in other edge cases as well.
+     */
+    syncExternalCursors(): void;
     private get CSS();
     private get EditorCSS();
     private handleMutation;
@@ -131,6 +137,7 @@ export default class GroupCollab {
     private createFakeCursor;
     private getFakeSelections;
     private createSelectionElement;
+    private getSelectionAsData;
     private validateEventDetail;
     private addBlockToIgnoreListUntilNextRender;
     private addBlockToIgnorelist;
