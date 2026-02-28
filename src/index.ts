@@ -19,6 +19,7 @@ const UserBlockSelectionChangeType = 'block-selection-change'
 const UserBlockDeletionChangeType = 'block-deletion-change'
 
 const UserDisconnectedType = 'user-disconnected'
+const UserPresencePingType = 'user-presence-ping'
 
 const BlockLockedType = 'block-locked'
 const BlockUnlockedType = 'block-unlocked'
@@ -39,6 +40,11 @@ type LocalConfig = {
      * @default 1500
      */
     blockLockDebounceTime: number
+    /**
+     * Time in ms to consider a user idle and remove their cursors and selections. This is used to prevent stale cursors/selections from users that have disconnected without triggering the disconnect event (e.g. by closing the laptop or losing internet connection).
+     * @default 60_000
+     */
+    externalUserIdleTimeout: number
     /**
      * For example the table tool triggers block changes even if the emitting user does not even interact with the block, which would also emit a locking event.
      * In such cases you can add the tool's name here to enable checking its data for changes before locking that block. Only `data` and `tunes` are checked to be changed.
@@ -87,6 +93,7 @@ export type MessageData =
     | MakeConditionalType<{}, typeof UserInlineSelectionAsk>
 
     | MakeConditionalType<{ connectionId: string }, typeof UserDisconnectedType>
+    | MakeConditionalType<{ connectionId: string }, typeof UserPresencePingType>
 
     | MakeConditionalType<{ blockId: string; isDeletePending: boolean }, typeof UserBlockDeletionChangeType>
     | MakeConditionalType<{ blockId: string; isSelected: boolean }, typeof UserBlockSelectionChangeType>
@@ -153,6 +160,9 @@ export default class GroupCollab {
     private throttledInlineSelectionChange?: throttle<() => void> = undefined
     private _debouncedBlockUnlockingsMap: Record<string, debounce<(blockId: string, connectionId: string) => void>> = {};
     private localBlockStates: Record<string, Set<'selected' | 'focused' | "deleting">> = {}
+    private externalUserLastSeenMap: Record<string, number> = {}
+    private externalUsersCleanupInterval?: number
+    private presencePingInterval?: number
 
     private editorBlockEvent = 'block changed'
     private editorDomChangedEvent = 'redactor dom changed' // this might need more investigation before any usage
@@ -172,6 +182,7 @@ export default class GroupCollab {
         const defaultConfig: LocalConfig = {
             blockChangeThrottleDelay: 300,
             blockLockDebounceTime: 1500,
+            externalUserIdleTimeout: 60_000,
             toolsWithDataCheck: ["table"],
         }
         this.config = {
@@ -223,7 +234,12 @@ export default class GroupCollab {
         this.redactorObserver.disconnect()
         this.toolboxObserver.disconnect()
         document.removeEventListener('selectionchange', this.throttledInlineSelectionChange!)
+        document.removeEventListener('visibilitychange', this.onVisibilityChange)
+        window.removeEventListener('focus', this.onWindowFocus)
+        window.removeEventListener('blur', this.onWindowBlur)
         window.removeEventListener("beforeunload", this.onDisconnect, { capture: true })
+        this.stopPreviousExternalUserInactivityTracking()
+        this.stopPreviousPresencePing()
         this.socket.send({ type: UserDisconnectedType, connectionId: this.socket.connectionId })
 
         // remove cursors, selections and block lockings
@@ -262,9 +278,14 @@ export default class GroupCollab {
             console.error("Could not initialize toolbox observer.")
         if (this.throttledInlineSelectionChange)
             document.addEventListener('selectionchange', this.throttledInlineSelectionChange)
+        document.addEventListener('visibilitychange', this.onVisibilityChange)
+        window.addEventListener('focus', this.onWindowFocus)
+        window.addEventListener('blur', this.onWindowBlur)
         window.addEventListener("beforeunload", this.onDisconnect, { capture: true })
 
         this._isListening = true
+        this.startExternalUserInactivityTracking()
+        this.startPresencePing()
 
         this.syncExternalCursors();
     }
@@ -402,8 +423,30 @@ export default class GroupCollab {
         this.socket.send({ type: UserDisconnectedType, connectionId: this.socket.connectionId })
     }
 
+    private onVisibilityChange = () => {
+        if (!this.isListening) return
+        if (document.visibilityState !== 'visible') return
+
+        this.syncExternalCursors()
+        this.onInlineSelectionChange()
+    }
+
+    private onWindowFocus = () => {
+        if (!this.isListening) return
+
+        this.syncExternalCursors()
+        this.onInlineSelectionChange()
+    }
+
+    private onWindowBlur = () => {
+        if (!this.isListening) return
+        this.getFakeSelections({ connectionId: this.socket.connectionId })?.forEach(selection => selection.remove())
+        this.getFakeCursors({ connectionId: this.socket.connectionId })?.forEach(cursor => cursor.remove())
+    }
+
     //#region Receive Changes Handling
     private onReceiveChange = (response: MessageData) => {
+        this.markExternalUserSeen(response)
         switch (response.type) {
             case 'block-added': {
                 const { index, block } = response
@@ -620,6 +663,12 @@ export default class GroupCollab {
                 selections?.forEach(sel => sel.remove())
                 cursors?.forEach(cursor => cursor.remove())
                 this.lockedBlocks = this.lockedBlocks.filter(b => b.connectionId !== connectionId)
+                delete this.externalUserLastSeenMap[connectionId]
+                break
+            }
+
+            case UserPresencePingType: {
+                console.log("Received presence ping from", response.connectionId, " at ", new Date().toLocaleTimeString())
                 break
             }
 
@@ -832,11 +881,16 @@ export default class GroupCollab {
     }
 
     private getSelectionAsData(): PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType> | null {
+        if (!document.hasFocus()) return null
+        if (document.visibilityState !== 'visible') return null
+
         const selection = document.getSelection()
         if (!selection) return null
+        if (!selection.rangeCount) return null
 
         const { anchorNode, anchorOffset, focusOffset } = selection
         if (!anchorNode) return null
+        if (!anchorNode.isConnected) return null
 
         if (!this.isNodeInsideOfEditor(anchorNode)) return null
 
@@ -868,6 +922,63 @@ export default class GroupCollab {
         }
 
         return data
+    }
+
+    private markExternalUserSeen(data: MessageData) {
+        if (!('connectionId' in data)) return
+
+        const { connectionId } = data
+        if (!connectionId || connectionId === this.socket.connectionId) return
+
+        this.externalUserLastSeenMap[connectionId] = Date.now()
+    }
+
+    private startExternalUserInactivityTracking() {
+        this.stopPreviousExternalUserInactivityTracking()
+        this.externalUsersCleanupInterval = window.setInterval(() => {
+            this.cleanupStaleExternalUsers()
+        }, Math.max(1_000, Math.floor(this.config.externalUserIdleTimeout / 3)))
+    }
+
+    private stopPreviousExternalUserInactivityTracking() {
+        if (!this.externalUsersCleanupInterval) return
+
+        window.clearInterval(this.externalUsersCleanupInterval)
+        this.externalUsersCleanupInterval = undefined
+    }
+
+    private cleanupStaleExternalUsers() {
+        const now = Date.now()
+        const staleConnectionIds = Object.entries(this.externalUserLastSeenMap)
+            .filter(([, lastSeen]) => now - lastSeen >= this.config.externalUserIdleTimeout)
+            .map(([connectionId]) => connectionId)
+
+        if (!staleConnectionIds.length) return
+
+        for (const connectionId of staleConnectionIds) {
+            this.getFakeSelections({ connectionId })?.forEach(selection => selection.remove())
+            this.getFakeCursors({ connectionId })?.forEach(cursor => cursor.remove())
+            this.lockedBlocks = this.lockedBlocks.filter(b => b.connectionId !== connectionId)
+            delete this.externalUserLastSeenMap[connectionId]
+        }
+    }
+
+    private startPresencePing() {
+        this.stopPreviousPresencePing()
+        this.presencePingInterval = window.setInterval(() => {
+            if (!this.isListening) return
+            if (document.visibilityState !== 'visible') return
+            if (!document.hasFocus()) return
+
+            this.socket.send({ type: UserPresencePingType, connectionId: this.socket.connectionId })
+        }, Math.max(1_000, Math.floor(this.config.externalUserIdleTimeout / 2)))
+    }
+
+    private stopPreviousPresencePing() {
+        if (!this.presencePingInterval) return
+
+        window.clearInterval(this.presencePingInterval)
+        this.presencePingInterval = undefined
     }
 
     private validateEventDetail(ev: CustomEvent): ev is CustomEvent<PossibleEventDetails> {

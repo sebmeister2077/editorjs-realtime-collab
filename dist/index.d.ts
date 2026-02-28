@@ -7,6 +7,7 @@ declare const UserInlineSelectionChangeType = "inline-selection-change";
 declare const UserBlockSelectionChangeType = "block-selection-change";
 declare const UserBlockDeletionChangeType = "block-deletion-change";
 declare const UserDisconnectedType = "user-disconnected";
+declare const UserPresencePingType = "user-presence-ping";
 declare const BlockLockedType = "block-locked";
 declare const BlockUnlockedType = "block-unlocked";
 export type GroupCollabConfigOptions = {
@@ -24,6 +25,11 @@ type LocalConfig = {
      * @default 1500
      */
     blockLockDebounceTime: number;
+    /**
+     * Time in ms to consider a user idle and remove their cursors and selections. This is used to prevent stale cursors/selections from users that have disconnected without triggering the disconnect event (e.g. by closing the laptop or losing internet connection).
+     * @default 60_000
+     */
+    externalUserIdleTimeout: number;
     /**
      * For example the table tool triggers block changes even if the emitting user does not even interact with the block, which would also emit a locking event.
      * In such cases you can add the tool's name here to enable checking its data for changes before locking that block. Only `data` and `tunes` are checked to be changed.
@@ -57,6 +63,8 @@ export type MessageData = MakeConditionalType<{
 }, typeof BlockMovedMutationType> | MakeConditionalType<UserInlineSelectionData, typeof UserInlineSelectionChangeType> | MakeConditionalType<{}, typeof UserInlineSelectionAsk> | MakeConditionalType<{
     connectionId: string;
 }, typeof UserDisconnectedType> | MakeConditionalType<{
+    connectionId: string;
+}, typeof UserPresencePingType> | MakeConditionalType<{
     blockId: string;
     isDeletePending: boolean;
 }, typeof UserBlockDeletionChangeType> | MakeConditionalType<{
@@ -100,6 +108,9 @@ export default class GroupCollab {
     private throttledInlineSelectionChange?;
     private _debouncedBlockUnlockingsMap;
     private localBlockStates;
+    private externalUserLastSeenMap;
+    private externalUsersCleanupInterval?;
+    private presencePingInterval?;
     private editorBlockEvent;
     private editorDomChangedEvent;
     private blockIdAttributeName;
@@ -129,6 +140,9 @@ export default class GroupCollab {
     private handleToolboxMutation;
     private onInlineSelectionChange;
     private onDisconnect;
+    private onVisibilityChange;
+    private onWindowFocus;
+    private onWindowBlur;
     private onReceiveChange;
     private onEditorBlockEvent;
     private setupThrottledListeners;
@@ -138,6 +152,12 @@ export default class GroupCollab {
     private getFakeSelections;
     private createSelectionElement;
     private getSelectionAsData;
+    private markExternalUserSeen;
+    private startExternalUserInactivityTracking;
+    private stopPreviousExternalUserInactivityTracking;
+    private cleanupStaleExternalUsers;
+    private startPresencePing;
+    private stopPreviousPresencePing;
     private validateEventDetail;
     private addBlockToIgnoreListUntilNextRender;
     private addBlockToIgnorelist;

@@ -86,6 +86,7 @@ new RealtimeCollabPlugin({
   socket,
   blockChangeThrottleDelay?,
   blockLockDebounceTime?,
+    externalUserIdleTimeout?,
   cursor?,
   overrideStyles?,
 })
@@ -101,6 +102,7 @@ new RealtimeCollabPlugin({
 | socket                              | `INeededSocketFields`                           | The socket instance (or custom method bingings)          | `required*`          |
 | blockChangeThrottleDelay            | `number`                                        | Delay to throttle block changes (ms).                    | `300`                |
 | blockLockDebounceTime               | `number`                                        | Delay to debounce block unlocking (ms).                  | `1500`               |
+| externalUserIdleTimeout             | `number`                                        | Remove stale remote users after inactivity (ms). | `60000`      |
 | toolsWithDataCheck                  | `string[]`                                      | Tools that need data comparison before locking           | `["table"]`          |
 | cursor.color                        | `string`                                        | Color of remote cursors (set per connectionId)           | `#0d0c0f`            |
 | cursor.selectionColor               | `string`                                        | Color of remote text selections (set per connectionId)   | `#0d0c0f33`          |
@@ -128,6 +130,25 @@ if (realtimeCollab.isListening) {
 ```
 
 This is useful when temporarily disabling collaboration, switching documents, or cleaning up in SPA route changes
+
+## Cursor Sync & Stale User Cleanup
+
+Use `syncExternalCursors()` when you need a fresh cursor/selection state from other users (for example after reconnect, tab focus return, or remounting the editor).
+
+```js
+// Request current cursor/selection state from other connected users
+realtimeCollab.syncExternalCursors()
+```
+
+Remote users are treated as stale if no activity is received for `externalUserIdleTimeout` milliseconds. When stale, their inline cursors, selections, and block locks are removed automatically.
+
+```js
+new RealtimeCollabPlugin({
+    editor,
+    socket,
+    externalUserIdleTimeout: 60000, // 60s
+})
+```
 
 ## Block Locking
 
