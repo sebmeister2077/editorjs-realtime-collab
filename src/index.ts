@@ -614,7 +614,7 @@ export default class GroupCollab {
                 break
             }
 
-            case 'user-disconnected': {
+            case UserDisconnectedType: {
                 const { connectionId } = response
                 const cursors = this.getFakeCursors({ connectionId })
                 const selections = this.getFakeSelections({ connectionId })

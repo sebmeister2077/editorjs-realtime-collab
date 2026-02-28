@@ -65,7 +65,7 @@ interface NeededSocketFields {
     send(data: MessageData): void
     on(callback: (data: MessageData) => void): void
     off(): void
-  connectionId: string
+    connectionId: string
 }
 
 ```
@@ -210,10 +210,12 @@ new RealtimeCollabPlugin({
 import { io } from 'socket.io-client'
 const socketInstance = io('wss://example.com/chat')
 const connectionId = "user-id"
-new GroupCollab({
+new RealtimeCollabPlugin({
     editor,
-    socket: { 
-        ...socketInstance, 
+    socket: {
+        send: (data) => socketInstance.emit('editorUpdate', data),
+        on: (callback) => socketInstance.on('editorUpdate', callback),
+        off: (callback) => socketInstance.off('editorUpdate', callback),
         connectionId 
     },
 })
@@ -227,12 +229,12 @@ const connection = new signalR.HubConnectionBuilder()
   .build()
 const connectionId = "user-id"
 connection.start().then(() => {
-    new GroupCollab({
+    new RealtimeCollabPlugin({
         editor,
         socket: {
-            send: connection.send.bind(connection),
-            on: connection.on.bind(connection),
-            off: connection.off.bind(connection),
+            send: (data) => connection.send('editorUpdate', data),
+            on: (callback) => connection.on('editorUpdate', callback),
+            off: (callback) => connection.off('editorUpdate', callback),
             connectionId,
         },
     })
@@ -245,26 +247,28 @@ connection.start().then(() => {
 const socket = new WebSocket('wss://example.com')
 
 socket.addEventListener('open', async (e) => {
-    const on = (eventName, callback) => {
+    const eventName = "editor-update"
+    const on = (callback) => {
         socket.addEventListener('message', (e) => {
             const isSameClient = e.currentTarget === socket
             if (isSameClient) return
 
             const splits = e.data.split(',')
             const receivedEventName = splits[0]
+            // Ignore messages that are not for this plugin
             if (eventName !== receivedEventName) return
             const data = JSON.parse(splits[1])
             callback(data)
         })
     }
-    const send = (eventName, data) => {
+    const send = ( data) => {
         socket.send([eventName, JSON.stringify(data)])
     }
-    const off = (eventName) => {
+    const off = () => {
         /* handle unsubscribing logic */
     }
     const connectionId = "user-id"
-    const groupCollab = new RealtimeCollabPlugin({
+    new RealtimeCollabPlugin({
         editor,
         socket: {
             send,
@@ -286,8 +290,8 @@ const pieSocket = new PieSocket.default({
 const channel = await pieSocket.subscribe('channel-name')
 
 const socket = {
-    on: (name: string, cb: Function) => channel.listen(name, (data, meta) => cb(data)),
-    send: (name: string, data: Object) => channel.publish(name, data),
+    on: (cb: Function) => channel.listen('editorjs-update', (data, meta) => cb(data)),
+    send: (data: Object) => channel.publish('editorjs-update', data),
     off: () => {
         /* unsubscribing logic */
     },
