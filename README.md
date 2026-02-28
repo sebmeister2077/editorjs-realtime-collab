@@ -40,19 +40,20 @@ const editor = new EditorJS({
 
 const realtimeCollab = new RealtimeCollabPlugin({
     editor,
-    socket: socketInstance,
+    socket: socketInstance,  // Should implement INeededSocketFields interface
 })
+
+// Start listening for events
+realtimeCollab.listen()
 ```
 
-After instantiation, the plugin is **idle** until you explicitly start it. Call `realtimeCollab.listen()` to begin listening for:
+After instantiation, the plugin is **idle** until you explicitly call `listen()`. This begins listening for:
 
 - Editor.js block mutations
-
-- DOM selection changes
-
+- DOM selection changes  
 - Incoming socket messages
 
-Use `realtimeCollab.unlisten()` to stop listening, and check `realtimeCollab.isListening` to inspect the current state.
+Use `realtimeCollab.unlisten()` to stop listening. Check `realtimeCollab.isListening` to inspect the current listening state.
 
 ## Socket Interface Contract
 
@@ -67,7 +68,6 @@ interface NeededSocketFields {
     off(): void
     connectionId: string
 }
-
 ```
 
 `connectionId`
@@ -112,9 +112,7 @@ new RealtimeCollabPlugin({
 
 ## Listening Control
 
-By default, the plugin starts listening immediately.
-
-You can manually control listeners if needed:
+You can manually control listeners as needed by calling `listen()` and `unlisten()`:
 
 ```js
 // Stop listening to editor + socket + DOM
@@ -129,13 +127,7 @@ if (realtimeCollab.isListening) {
 }
 ```
 
-This is useful when:
-
-- Temporarily disabling collaboration
-
-- Switching documents
-
-- Cleaning up in SPA route changes
+This is useful when temporarily disabling collaboration, switching documents, or cleaning up in SPA route changes
 
 ## Block Locking
 
@@ -352,12 +344,13 @@ You can override any of them via `overrideStyles` or your own CSS.
 
 ### Gotchas & Notes
 
-- ⚠️ `connectionId` must be stable for a user session
-
+- ⚠️ `connectionId` must be stable for a user session and unique across users to prevent update conflicts
 
 - ✅ Editor content stays consistent even with rapid concurrent edits
 
 - ✅ Self-emitted events are automatically ignored
+
+- ✅ Use `toolsWithDataCheck` to prevent false locks from tools that emit frequent change events (like tables)
 `
 
 ## Architecture Overview
