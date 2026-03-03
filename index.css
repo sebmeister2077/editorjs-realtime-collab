@@ -38,3 +38,11 @@
       color: white;
       cursor: pointer;
   }
+
+  footer {
+      padding: 10px;
+  }
+
+  footer a {
+      color: #3b82f6;
+  }

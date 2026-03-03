@@ -40,7 +40,7 @@ const editor = new EditorJS({
 
 const realtimeCollab = new RealtimeCollabPlugin({
     editor,
-    socket: socketInstance,  // Should implement INeededSocketFields interface
+    socket: socketInterface,  // Should implement INeededSocketFields interface
 })
 
 // Start listening for events
@@ -62,7 +62,7 @@ The plugin does **not** depend on Socket.IO, SignalR, or any specific library.
 Your socket only needs to implement this interface:
 
 ```ts
-interface NeededSocketFields {
+interface INeededSocketFields {
     send(data: MessageData): void
     on(callback: (data: MessageData) => void): void
     off(): void

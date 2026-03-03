@@ -99,6 +99,7 @@ export default class GroupCollab {
     private _isListening;
     private _currentEditorLockingBlockId;
     private _lockedBlocks;
+    private _externalUserSelections;
     private _customToolsInternalState;
     private ignoreEvents;
     private redactorObserver;
@@ -122,6 +123,8 @@ export default class GroupCollab {
     get lockedBlocks(): LockedBlock[];
     set lockedBlocks(value: LockedBlock[]);
     get currentLockedBlockId(): string | null;
+    get externalUserSelections(): UserInlineSelectionData[];
+    set externalUserSelections(value: UserInlineSelectionData[]);
     /**
      * Remove event listeners on socket and editor
      */
@@ -169,6 +172,9 @@ export default class GroupCollab {
     private getRedactor;
     private getEditorHolder;
     private renderLockedBlocks;
+    private renderExternalUserSelections;
+    private selectionsAreEqual;
+    private renderSingleExternalSelection;
     private compareToolsData;
     private initializeCustomToolsState;
     private setupStyleElement;
@@ -178,6 +184,5 @@ export default class GroupCollab {
     private getElementXPath;
     private getNodeRelativeChildIndex;
     private applyNeccessaryChanges;
-    private calculateRelativeRects;
 }
 export {};

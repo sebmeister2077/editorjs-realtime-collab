@@ -104,14 +104,13 @@ export type MessageData =
 type UserInlineSelectionData = {
     elementXPath: string
     blockId: string
-    // rects: Rect[]
     containerWidth: number
 
     connectionId: string;
     color: string;
     selectionColor: string;
 
-    //idk if i'll use these
+
     elementNodeIndex: number
     anchorOffset: number
     focusOffset: number
@@ -149,6 +148,7 @@ export default class GroupCollab {
     private _isListening = false
     private _currentEditorLockingBlockId: string | null = null;
     private _lockedBlocks: LockedBlock[] = [];
+    private _externalUserSelections: UserInlineSelectionData[] = [];
     private _customToolsInternalState: Record<string, ToolData> = {}
 
     // events to ignore until next render
@@ -225,6 +225,16 @@ export default class GroupCollab {
     public get currentLockedBlockId(): string | null {
         return this._currentEditorLockingBlockId;
     }
+
+    public get externalUserSelections(): UserInlineSelectionData[] {
+        return this._externalUserSelections.map(s => ({ ...s }))
+    }
+
+    public set externalUserSelections(value: UserInlineSelectionData[]) {
+        const oldSelections = this._externalUserSelections
+        this._externalUserSelections = value.map(s => ({ ...s }))
+        this.renderExternalUserSelections(oldSelections, this._externalUserSelections)
+    }
     /**
      * Remove event listeners on socket and editor
      */
@@ -243,8 +253,7 @@ export default class GroupCollab {
         this.socket.send({ type: UserDisconnectedType, connectionId: this.socket.connectionId })
 
         // remove cursors, selections and block lockings
-        this.getFakeCursors({})?.forEach(cursor => cursor.remove())
-        this.getFakeSelections({})?.forEach(selection => selection.remove())
+        this.externalUserSelections = []
         this.lockedBlocks = []
 
         this._isListening = false
@@ -296,8 +305,7 @@ export default class GroupCollab {
     public syncExternalCursors() {
         if (!this.isListening) return;
 
-        this.getFakeCursors({})?.forEach(cursor => cursor.remove())
-        this.getFakeSelections({})?.forEach(selection => selection.remove())
+        this.externalUserSelections = []
         this.socket.send({ type: UserInlineSelectionAsk })
     }
 
@@ -381,7 +389,6 @@ export default class GroupCollab {
         if (!isToolbarClosing) {
             const toolboxDeleteSetting = this.getEditorHolder()?.querySelector(`.${this.EditorCSS.toolbar} ${this.EditorCSS.toolbarDeleteSetting}`)
             if (!(toolboxDeleteSetting instanceof HTMLElement)) return;
-            // console.log("🚀 toolboxDeleteSetting:", toolboxDeleteSetting)
 
             isDeletePending = toolboxDeleteSetting.classList.contains("ce-popover-item--confirmation")
         }
@@ -506,17 +513,10 @@ export default class GroupCollab {
                 this.addBlockToIgnoreListUntilNextRender(fromBlockId, response.type)
                 this.editor.blocks.move(toIndex, fromIndex)
 
-                const fromSelections = this.getFakeSelections({ blockId: fromBlockId })
-                fromSelections?.forEach(sel => sel.remove())
-
-                const toSelections = this.getFakeSelections({ blockId: toBlockId })
-                toSelections?.forEach(sel => sel.remove())
-
-                const fromCursors = this.getFakeCursors({ blockId: fromBlockId })
-                fromCursors?.forEach(cursor => cursor.remove())
-
-                const toCursors = this.getFakeCursors({ blockId: toBlockId })
-                toCursors?.forEach(cursor => cursor.remove())
+                // Remove selections for affected blocks
+                this.externalUserSelections = this._externalUserSelections.filter(
+                    s => s.blockId !== fromBlockId && s.blockId !== toBlockId
+                )
 
                 break
             }
@@ -531,10 +531,8 @@ export default class GroupCollab {
                 if (shouldHaveInternalState) {
                     delete this._customToolsInternalState[blockId];
                 }
-                const selections = this.getFakeSelections({ blockId })
-                selections?.forEach(sel => sel.remove())
-                const cursors = this.getFakeCursors({ blockId })
-                cursors?.forEach(cursor => cursor.remove())
+                // Remove selections for deleted block
+                this.externalUserSelections = this._externalUserSelections.filter(s => s.blockId !== blockId)
                 break
             }
             case 'block-selection-change': {
@@ -576,78 +574,25 @@ export default class GroupCollab {
             }
 
             case 'inline-selection-change': {
-                const { type, /* rects, */ elementXPath, blockId, connectionId, anchorOffset, elementNodeIndex, focusOffset, color, selectionColor } = response
-                const blockContent = this.getDOMBlockById(blockId)?.querySelector(`.${this.EditorCSS.blockContent}`)
-                if (!blockContent /* || !rects.length */) return
+                const { type, elementXPath, blockId, connectionId, anchorOffset, elementNodeIndex, focusOffset, color, selectionColor, containerWidth } = response
 
-                const isSelection = anchorOffset !== focusOffset
-                const isReset = elementXPath === null || isSelection
-                if (isReset) {
-                    const oldCursors = this.getFakeCursors({ connectionId })
-                    oldCursors?.forEach(cursor => cursor.remove())
+                // Build the new selection data
+                const newSelectionData: UserInlineSelectionData = {
+                    elementXPath,
+                    blockId,
+                    connectionId,
+                    anchorOffset,
+                    focusOffset,
+                    elementNodeIndex,
+                    containerWidth,
+                    color,
+                    selectionColor,
                 }
 
-                // remove existing selection for this user
-                // console.log(response)
-                const editorHolder = this.getEditorHolder()
-                if (!editorHolder) return
-                const parentElement = editorHolder.querySelector(elementXPath)
-                if (!(parentElement instanceof HTMLElement)) return
-
-                const nodeElement = parentElement.childNodes[elementNodeIndex];
-                if (!nodeElement) return
-                const calculatedSelectionRects = this.getBoundingClientRectForSelection(nodeElement, anchorOffset, focusOffset)
-                const parentElementRect = editorHolder.getBoundingClientRect()
-
-                this.getFakeSelections({ connectionId })?.forEach((sel) => sel.remove())
-                if (isSelection) {
-
-                    // Adjust rects to be relative to editorHolder
-
-                    for (let i = 0; i < calculatedSelectionRects.length; i++) {
-                        const rect = calculatedSelectionRects.item(i)
-                        if (!rect) continue
-                        const selectionElement = this.createSelectionElement({ blockId, connectionId })
-                        // Adjust rect position relative to parentElement
-                        selectionElement.style.top = `${rect.top - parentElementRect.top}px`
-                        selectionElement.style.left = `${rect.left - parentElementRect.left}px`
-                        selectionElement.style.width = `${rect.width}px`;
-                        selectionElement.style.height = `${rect.height}px`;
-                        if (selectionColor) selectionElement.style.setProperty('--realtime-inline-selection-color', selectionColor)
-                        editorHolder.insertAdjacentElement("beforeend", selectionElement);
-                        this.addBlockToIgnoreListUntilNextRender(blockId, 'block-changed');
-                    }
-                } else {
-                    let cursor: HTMLDivElement;
-                    if (isReset)
-                        cursor = this.createFakeCursor({ connectionId, blockId })
-                    else {
-                        cursor = this.getFakeCursors({ connectionId })?.item(0) as HTMLDivElement;
-                        if (!cursor) cursor = this.createFakeCursor({ connectionId, blockId })
-                        // reset animation state
-                        cursor.style.animation = 'none'
-                        cursor.offsetHeight // trigger reflow
-                        cursor.style.animation = ''
-                    }
-                    const rect = calculatedSelectionRects.item(0)
-                    if (!rect) return;
-                    //* Note if element is not found try without nth-child
-                    const selectedElement = this.getEditorHolder()?.querySelector(elementXPath)
-                    if (!(selectedElement instanceof HTMLElement)) return
-
-                    //This is used to resize the height of the selection if users have different font sizes/screen zoom in/out s
-                    const { fontSize } = window.getComputedStyle(selectedElement)
-
-                    cursor.style.height = fontSize
-                    cursor.style.top = `${rect.top - parentElementRect.top}px`
-                    cursor.style.left = `${rect.left - parentElementRect.left}px`
-
-                    const { cursorClass } = this.config.overrideStyles ?? {}
-                    if (color) cursor.style.setProperty('--realtime-inline-cursor-color', color)
-                    if (cursorClass) cursor.classList.add(...cursorClass.split(' '))
-
-                    if (!editorHolder.contains(cursor)) editorHolder.insertAdjacentElement("beforeend", cursor)
-                }
+                // Update state: remove old selection for this connectionId, add new one
+                const updatedSelections = this._externalUserSelections.filter(s => s.connectionId !== connectionId)
+                updatedSelections.push(newSelectionData)
+                this.externalUserSelections = updatedSelections
                 break
             }
 
@@ -658,17 +603,13 @@ export default class GroupCollab {
 
             case UserDisconnectedType: {
                 const { connectionId } = response
-                const cursors = this.getFakeCursors({ connectionId })
-                const selections = this.getFakeSelections({ connectionId })
-                selections?.forEach(sel => sel.remove())
-                cursors?.forEach(cursor => cursor.remove())
+                this.externalUserSelections = this._externalUserSelections.filter(s => s.connectionId !== connectionId)
                 this.lockedBlocks = this.lockedBlocks.filter(b => b.connectionId !== connectionId)
                 delete this.externalUserLastSeenMap[connectionId]
                 break
             }
 
             case UserPresencePingType: {
-                console.log("Received presence ping from", response.connectionId, " at ", new Date().toLocaleTimeString())
                 break
             }
 
@@ -688,10 +629,8 @@ export default class GroupCollab {
                     animationName: 'none',
                 }, blockId)
 
-                const cursors = this.getFakeCursors({ blockId })
-                cursors?.forEach(cursor => cursor.remove())
-                const selections = this.getFakeSelections({ blockId })
-                selections?.forEach(sel => sel.remove())
+                // Remove selections for locked block
+                this.externalUserSelections = this._externalUserSelections.filter(s => s.blockId !== blockId)
                 break;
             }
 
@@ -750,8 +689,7 @@ export default class GroupCollab {
                 this.socket.send({ type: BlockLockedType, blockId: targetId, connectionId: this.socket.connectionId })
 
                 // Remove any other user's cursor/selection in this block
-                this.getFakeCursors({ blockId: targetId })?.forEach(cursor => cursor.remove())
-                this.getFakeSelections({ blockId: targetId })?.forEach(sel => sel.remove())
+                this.externalUserSelections = this._externalUserSelections.filter(s => s.blockId !== targetId)
                 this.debouncedBlockUnlocking(targetId, this.socket.connectionId)
             }
         }
@@ -854,15 +792,19 @@ export default class GroupCollab {
         return domCursors
     }
 
-    private createFakeCursor({ blockId, connectionId }: Record<"blockId" | "connectionId", string>) {
+    private createFakeCursor({ blockId, connectionId, color }: Record<"blockId" | "connectionId" | "color", string>) {
         const cursor = document.createElement('div')
         cursor.setAttribute(this.inlineFakeCursorAttributeName, blockId)
         cursor.setAttribute(this.connectionIdAttributeName, connectionId)
         cursor.classList.add(this.CSS.inlineCursor)
+        if (color) cursor.style.setProperty('--realtime-inline-cursor-color', color)
+        const { cursorClass } = this.config.overrideStyles ?? {}
+        if (cursorClass) cursor.classList.add(...cursorClass.split(' '))
+
         return cursor
     }
 
-    private getFakeSelections({ blockId, connectionId }: Partial<Record<"blockId" | "connectionId", string>>) {
+    private getFakeSelections({ blockId, connectionId }: Partial<Record<"blockId" | "connectionId", string>>): NodeListOf<Element> | undefined {
         const connectionQuery = connectionId ? `[${this.connectionIdAttributeName}='${connectionId}']` : ""
         return this.getEditorHolder()?.querySelectorAll(
             `[${this.inlineFakeSelectionAttributeName}${blockId ? `='${blockId}'` : ""}]${connectionQuery}`,
@@ -955,10 +897,18 @@ export default class GroupCollab {
 
         if (!staleConnectionIds.length) return
 
+        const staleConnectionIdSet = new Set(staleConnectionIds)
+
+        // Remove selections for stale users via setter
+        this.externalUserSelections = this._externalUserSelections.filter(
+            s => !staleConnectionIdSet.has(s.connectionId)
+        )
+
+        // Also clean up locked blocks and last seen map
+        this.lockedBlocks = this.lockedBlocks.filter(
+            b => !staleConnectionIdSet.has(b.connectionId)
+        )
         for (const connectionId of staleConnectionIds) {
-            this.getFakeSelections({ connectionId })?.forEach(selection => selection.remove())
-            this.getFakeCursors({ connectionId })?.forEach(cursor => cursor.remove())
-            this.lockedBlocks = this.lockedBlocks.filter(b => b.connectionId !== connectionId)
             delete this.externalUserLastSeenMap[connectionId]
         }
     }
@@ -1101,6 +1051,99 @@ export default class GroupCollab {
 
     }
 
+    private renderExternalUserSelections(oldSelections: UserInlineSelectionData[], newSelections: UserInlineSelectionData[]) {
+        const editorHolder = this.getEditorHolder()
+        if (!editorHolder) return
+
+        // Find connectionIds to remove (in old but not in new)
+        const oldConnectionIds = new Set(oldSelections.map(s => s.connectionId))
+        const newConnectionIds = new Set(newSelections.map(s => s.connectionId))
+
+        // Remove DOM for connectionIds no longer in state
+        for (const connectionId of oldConnectionIds) {
+            if (!newConnectionIds.has(connectionId)) {
+                this.getFakeCursors({ connectionId })?.forEach(cursor => cursor.remove())
+                this.getFakeSelections({ connectionId })?.forEach(selection => selection.remove())
+            }
+        }
+
+        // For each new selection, check if it changed from old and re-render if so
+        for (const newSel of newSelections) {
+            const oldSel = oldSelections.find(s => s.connectionId === newSel.connectionId)
+            const hasChanged = !oldSel || !this.selectionsAreEqual(oldSel, newSel)
+
+            if (hasChanged) {
+                this.renderSingleExternalSelection(newSel, editorHolder)
+            }
+        }
+    }
+
+    private selectionsAreEqual(a: UserInlineSelectionData, b: UserInlineSelectionData): boolean {
+        return a.elementXPath === b.elementXPath &&
+            a.blockId === b.blockId &&
+            a.connectionId === b.connectionId &&
+            a.anchorOffset === b.anchorOffset &&
+            a.focusOffset === b.focusOffset &&
+            a.elementNodeIndex === b.elementNodeIndex &&
+            a.containerWidth === b.containerWidth &&
+            a.color === b.color &&
+            a.selectionColor === b.selectionColor
+    }
+
+    private renderSingleExternalSelection(selection: UserInlineSelectionData, editorHolder: Element) {
+        const { elementXPath, blockId, connectionId, anchorOffset, focusOffset, elementNodeIndex, color, selectionColor } = selection
+
+        // Remove existing DOM elements for this connectionId
+        this.getFakeCursors({ connectionId })?.forEach(cursor => cursor.remove())
+        this.getFakeSelections({ connectionId })?.forEach(sel => sel.remove())
+
+        // Validate that the block content exists
+        const blockContent = this.getDOMBlockById(blockId)?.querySelector(`.${this.EditorCSS.blockContent}`)
+        if (!blockContent) return
+
+        // Resolve XPath to actual DOM element
+        const parentElement = editorHolder.querySelector(elementXPath)
+        if (!(parentElement instanceof HTMLElement)) return
+
+        const nodeElement = parentElement.childNodes[elementNodeIndex]
+        if (!nodeElement) return
+
+        // TODO test this when anchor and focus are in different nodes, currently we only support selections within a single node
+        const calculatedSelectionRects = this.getBoundingClientRectForSelection(nodeElement, anchorOffset, focusOffset)
+        const parentElementRect = editorHolder.getBoundingClientRect()
+        const isSelection = anchorOffset !== focusOffset
+
+        if (isSelection) {
+            // Render selection highlights
+            for (let i = 0; i < calculatedSelectionRects.length; i++) {
+                const rect = calculatedSelectionRects.item(i)
+                if (!rect) continue
+
+                const selectionElement = this.createSelectionElement({ blockId, connectionId })
+                selectionElement.style.top = `${rect.top - parentElementRect.top}px`
+                selectionElement.style.left = `${rect.left - parentElementRect.left}px`
+                selectionElement.style.width = `${rect.width}px`
+                selectionElement.style.height = `${rect.height}px`
+                if (selectionColor) selectionElement.style.setProperty('--realtime-inline-selection-color', selectionColor)
+                editorHolder.insertAdjacentElement('beforeend', selectionElement)
+                this.addBlockToIgnoreListUntilNextRender(blockId, 'block-changed')
+            }
+        } else {
+            // Render cursor (collapsed selection)
+            const cursor = this.createFakeCursor({ connectionId, blockId, color })
+            const rect = calculatedSelectionRects.item(0)
+            if (!rect) return
+
+            const { fontSize } = window.getComputedStyle(parentElement)
+            cursor.style.height = fontSize
+            cursor.style.top = `${rect.top - parentElementRect.top}px`
+            cursor.style.left = `${rect.left - parentElementRect.left}px`
+
+
+            editorHolder.insertAdjacentElement('beforeend', cursor)
+        }
+    }
+
     // With stringify, the order of the keys might differ, so we need a deep comparison
     private compareToolsData(toolData1: ToolData, toolData2: ToolData): boolean {
         function recursiveCompare(obj1: any, obj2: any): boolean {
@@ -1241,29 +1284,5 @@ export default class GroupCollab {
             }
         }
     }
-
-    private calculateRelativeRects(inputRects: Rect[], inputContainerWidth: number, currentContainer: HTMLElement): Rect[] {
-        const outputRects: Rect[] = []
-
-        const currentWidth = currentContainer.clientWidth
-        if (inputContainerWidth === currentWidth) return inputRects // Wow that was easy
-
-        const isScaledDownNow = currentWidth < inputContainerWidth
-        // ex if left+width > currentWidth => needs to be broken down
-
-        //TODO i have to wrap the content inside a span so i have the correct width 😓 maybe?
-        let currentRect = inputRects.at(0)
-        let rectWidthsSum = 0
-
-        // NOTE: when you have multiblock selection, the `Left` value indicates how much distance is between the TEXT and HtmlElement container
-        if (isScaledDownNow) {
-        } else {
-            for (const r of inputRects) {
-            }
-        }
-
-        return outputRects
-    }
-
 
 }
