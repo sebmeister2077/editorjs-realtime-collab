@@ -1110,6 +1110,8 @@ export default class GroupCollab {
 
         // TODO test this when anchor and focus are in different nodes, currently we only support selections within a single node
         const calculatedSelectionRects = this.getBoundingClientRectForSelection(nodeElement, anchorOffset, focusOffset)
+        if (!calculatedSelectionRects) return
+
         const parentElementRect = editorHolder.getBoundingClientRect()
         const isSelection = anchorOffset !== focusOffset
 
@@ -1198,14 +1200,20 @@ export default class GroupCollab {
         }
     }
 
-    private getBoundingClientRectForSelection(node: Node, anchorOffset: number, focusOffset: number): DOMRectList {
-        const range = document.createRange()
-        const start = Math.min(anchorOffset, focusOffset)
-        const end = Math.max(anchorOffset, focusOffset)
-        range.setStart(node, start)
-        range.setEnd(node, end)
-        const rect = range.getClientRects()
-        return rect
+    private getBoundingClientRectForSelection(node: Node, anchorOffset: number, focusOffset: number): DOMRectList | null {
+        try {
+            const range = document.createRange()
+            const start = Math.min(anchorOffset, focusOffset)
+            const end = Math.max(anchorOffset, focusOffset)
+            range.setStart(node, start)
+            range.setEnd(node, end)
+            const rect = range.getClientRects()
+            return rect
+        } catch (e) {
+            const message = `Failed to set cursor/selection range for node. This can happen if the offsets are out of bounds for the given node (Data is not synced at the DOM level, even if json level is).`
+            console.error(message, { cause: e })
+            return null
+        }
 
     }
 

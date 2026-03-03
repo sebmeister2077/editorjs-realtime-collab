@@ -35,6 +35,8 @@
             <button id="applyThrottle">Apply</button>
         </div>
         <script type="module">
+            import editorjslist from 'https://cdn.jsdelivr.net/npm/@editorjs/list@2.0.9/+esm'
+
             import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-app.js'
             import { initializeAppCheck, ReCaptchaV3Provider } from 'https://www.gstatic.com/firebasejs/12.7.0/firebase-app-check.js'
             import {
@@ -276,6 +278,7 @@
                         tools: {
                             header: Header,
                             table: Table,
+                            list: editorjslist,
                             paragraph: {
                                 class: self.Paragraph,
                                 config: {

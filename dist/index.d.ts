@@ -1,6 +1,6 @@
 import EditorJS, { type BlockAddedMutationType, type BlockRemovedMutationType, type BlockMovedMutationType, type BlockChangedMutationType } from '@editorjs/editorjs';
 import { type SavedData } from '@editorjs/editorjs/types/data-formats/block-data';
-import { type MakeConditionalType } from './UtilityTypes';
+import { type PickFromConditionalType, type MakeConditionalType } from './UtilityTypes';
 import './index.css';
 declare const UserInlineSelectionAsk = "inline-selection-request";
 declare const UserInlineSelectionChangeType = "inline-selection-change";
@@ -137,6 +137,7 @@ export default class GroupCollab {
      * Manually trigger cursor syncronization for other users. This is already called when a new user joins and wants to see other users' cursors, but can be useful in other edge cases as well.
      */
     syncExternalCursors(): void;
+    getSelectionAsData(): PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType> | null;
     private get CSS();
     private get EditorCSS();
     private handleMutation;
@@ -154,7 +155,6 @@ export default class GroupCollab {
     private createFakeCursor;
     private getFakeSelections;
     private createSelectionElement;
-    private getSelectionAsData;
     private markExternalUserSeen;
     private startExternalUserInactivityTracking;
     private stopPreviousExternalUserInactivityTracking;
