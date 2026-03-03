@@ -82,13 +82,14 @@ interface INeededSocketFields {
 
 ```ts
 new RealtimeCollabPlugin({
-  editor,
-  socket,
-  blockChangeThrottleDelay?,
-  blockLockDebounceTime?,
+    editor,
+    socket,
+    blockChangeThrottleDelay?,
+    blockLockDebounceTime?,
     externalUserIdleTimeout?,
-  cursor?,
-  overrideStyles?,
+    cursor?,
+    overrideStyles?,
+    toolsWithDataCheck?,
 })
 
 
@@ -215,7 +216,66 @@ new RealtimeCollabPlugin({
 - A custom tool triggers change events during interactions with other blocks
 - You want tighter control over lock behavior for specific tools
 
-## Examples
+## Programmatic UI Updates
+
+### Direct Property Modifications
+
+You can programmatically modify the collaboration state by directly updating `Plugin.lockedBlocks` and `Plugin.externalUserSelections`. The UI will automatically update to reflect these changes:
+
+```js
+// Add or remove locked blocks
+realtimeCollab.lockedBlocks = [
+  { blockId: 'block-1', connectionId: 'user-2' },
+  { blockId: 'block-3', connectionId: 'user-3' }
+]
+
+// Add or update external user selections (array of UserInlineSelectionData)
+realtimeCollab.externalUserSelections = [
+  {
+    blockId: 'block-1',
+    connectionId: 'user-2',
+    elementXPath: '.codex-editor__redactor > div:nth-child(2) > div',
+    containerWidth: 800,
+    elementNodeIndex: 0,
+    anchorOffset: 5,
+    focusOffset: 12,
+    color: '#0d0c0f',
+    selectionColor: '#0d0c0f33'
+  }
+]
+```
+
+**Important:** Any changes to these properties will immediately trigger UI updates:
+
+- **`lockedBlocks`** changes will update lock indicators on blocks
+- **`externalUserSelections`** changes will update cursor and selection visualizations
+
+This is useful when you need to programmatically sync state, handle reconnections, or update the collaboration state from external events.
+
+### Getting Current User's Selection Data
+
+To get the current user's inline selection (cursor and text selection), use the public `getSelectionAsData()` method:
+
+```js
+// Get the current user's selection/cursor data
+const selectionData = realtimeCollab.getSelectionAsData()
+
+```
+
+This returns `null` if:
+
+- The document is not focused
+- The document is not visible
+- No selection is made in the editor
+
+To track which block the current user is editing, you can use the `currentLockedBlockId` property:
+
+```js
+// Returns the blockId being edited by this user, or null if not editing
+const currentEditingBlockId = realtimeCollab.currentLockedBlockId
+```
+
+## Socket Implementation Examples
 
 ### Socket.IO
 
@@ -254,15 +314,25 @@ connection.start().then(() => {
 })
 ```
 
-### Native WebSocket (Custom Binding)
+### Native WebSocket
 
 ```ts
 const socket = new WebSocket('wss://example.com')
 
 socket.addEventListener('open', async (e) => {
-    const eventName = "editor-update"
+    const eventName = "editor-update";
+
+    let listener = null
+    
+    const off = () => {
+        if (listener) {
+            socket.removeEventListener('message', listener)
+            listener = null
+        }
+    }
     const on = (callback) => {
-        socket.addEventListener('message', (e) => {
+        off()
+        listener = (e) => {
             const isSameClient = e.currentTarget === socket
             if (isSameClient) return
 
@@ -272,14 +342,13 @@ socket.addEventListener('open', async (e) => {
             if (eventName !== receivedEventName) return
             const data = JSON.parse(splits[1])
             callback(data)
-        })
+        }
+        socket.addEventListener('message', listener)
     }
-    const send = ( data) => {
+    const send = (data) => {
         socket.send([eventName, JSON.stringify(data)])
     }
-    const off = () => {
-        /* handle unsubscribing logic */
-    }
+
     const connectionId = "user-id"
     new RealtimeCollabPlugin({
         editor,
@@ -306,7 +375,7 @@ const socket = {
     on: (cb: Function) => channel.listen('editorjs-update', (data, meta) => cb(data)),
     send: (data: Object) => channel.publish('editorjs-update', data),
     off: () => {
-        /* unsubscribing logic */
+        channel.unsubscribe()
     },
     connectionId: "user-id"
 }

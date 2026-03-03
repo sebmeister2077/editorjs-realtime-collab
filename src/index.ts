@@ -309,6 +309,50 @@ export default class GroupCollab {
         this.socket.send({ type: UserInlineSelectionAsk })
     }
 
+    public getSelectionAsData(): PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType> | null {
+        if (!document.hasFocus()) return null
+        if (document.visibilityState !== 'visible') return null
+
+        const selection = document.getSelection()
+        if (!selection) return null
+        if (!selection.rangeCount) return null
+
+        const { anchorNode, anchorOffset, focusOffset } = selection
+        if (!anchorNode) return null
+        if (!anchorNode.isConnected) return null
+
+        if (!this.isNodeInsideOfEditor(anchorNode)) return null
+
+        const { parentElement } = anchorNode
+        if (!parentElement) return null
+
+        const contentAndBlockId = this.getContentAndBlockIdFromNode(anchorNode)
+        if (!contentAndBlockId) return null
+        const { blockId, contentElement } = contentAndBlockId
+
+        const elementNodeIndex = this.getNodeRelativeChildIndex(anchorNode)
+        if (elementNodeIndex === null) return null
+        const path = this.getElementXPath(parentElement)
+        const containerWidth = contentElement.clientWidth
+
+        const data: PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType> = {
+            type: UserInlineSelectionChangeType,
+            blockId,
+            elementXPath: path,
+            containerWidth,
+            anchorOffset,
+            focusOffset,
+            elementNodeIndex,
+            // rects: finalRects,
+
+            color: this.config.cursor?.color ?? '',
+            selectionColor: this.config.cursor?.selectionColor ?? '',
+            connectionId: this.socket.connectionId
+        }
+
+        return data
+    }
+
     //#endregion
     //#region Private APIs
 
@@ -820,50 +864,6 @@ export default class GroupCollab {
             selection.classList.add(this.config.overrideStyles.inlineSelectionClass)
 
         return selection
-    }
-
-    private getSelectionAsData(): PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType> | null {
-        if (!document.hasFocus()) return null
-        if (document.visibilityState !== 'visible') return null
-
-        const selection = document.getSelection()
-        if (!selection) return null
-        if (!selection.rangeCount) return null
-
-        const { anchorNode, anchorOffset, focusOffset } = selection
-        if (!anchorNode) return null
-        if (!anchorNode.isConnected) return null
-
-        if (!this.isNodeInsideOfEditor(anchorNode)) return null
-
-        const { parentElement } = anchorNode
-        if (!parentElement) return null
-
-        const contentAndBlockId = this.getContentAndBlockIdFromNode(anchorNode)
-        if (!contentAndBlockId) return null
-        const { blockId, contentElement } = contentAndBlockId
-
-        const elementNodeIndex = this.getNodeRelativeChildIndex(anchorNode)
-        if (elementNodeIndex === null) return null
-        const path = this.getElementXPath(parentElement)
-        const containerWidth = contentElement.clientWidth
-
-        const data: PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType> = {
-            type: UserInlineSelectionChangeType,
-            blockId,
-            elementXPath: path,
-            containerWidth,
-            anchorOffset,
-            focusOffset,
-            elementNodeIndex,
-            // rects: finalRects,
-
-            color: this.config.cursor?.color ?? '',
-            selectionColor: this.config.cursor?.selectionColor ?? '',
-            connectionId: this.socket.connectionId
-        }
-
-        return data
     }
 
     private markExternalUserSeen(data: MessageData) {
