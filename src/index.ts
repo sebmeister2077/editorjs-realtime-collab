@@ -1151,9 +1151,30 @@ export default class GroupCollab {
             const rect = calculatedSelectionRects.item(0)
             if (!rect) return
 
-            const { fontSize } = window.getComputedStyle(parentElement)
-            cursor.style.height = fontSize
-            cursor.style.top = `${rect.top - parentElementRect.top}px`
+            const computedStyle = window.getComputedStyle(parentElement)
+            const lineHeight = computedStyle.lineHeight
+            const fontSize = computedStyle.fontSize
+
+            // Calculate actual line height in pixels
+            let lineHeightPx: number
+            if (lineHeight === 'normal') {
+                // Normal line-height is typically 1.2 times the font size
+                lineHeightPx = parseFloat(fontSize) * 1.2
+            } else if (lineHeight.endsWith('px')) {
+                lineHeightPx = parseFloat(lineHeight)
+            } else {
+                // If it's a unitless number, multiply by font size
+                lineHeightPx = parseFloat(lineHeight) * parseFloat(fontSize)
+            }
+
+            // Use the rect height as cursor height for better accuracy
+            const cursorHeight = rect.height
+
+            // Calculate vertical offset to center the cursor in the line
+            const verticalOffset = (lineHeightPx - cursorHeight) / 2
+
+            cursor.style.height = `${cursorHeight}px`
+            cursor.style.top = `${rect.top - parentElementRect.top + verticalOffset}px`
             cursor.style.left = `${rect.left - parentElementRect.left}px`
 
 
