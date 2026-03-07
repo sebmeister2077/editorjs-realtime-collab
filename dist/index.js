@@ -793,7 +793,7 @@ class GroupCollab {
             }
         });
         this.toolboxObserver = new MutationObserver((mutations, observer) => {
-            const lastMutation = mutations.at(-1);
+            const lastMutation = mutations[mutations.length - 1];
             if (!lastMutation)
                 return;
             this.handleToolboxMutation(lastMutation);
@@ -1531,17 +1531,37 @@ class GroupCollab {
         return null;
     }
     getRedactor() {
-        const redactor = this.editor?.ui.redactor ??
-            this.getEditorHolder()?.querySelector(`.${this.EditorCSS.editorRedactor}`) ??
-            document.querySelector(`.${this.EditorCSS.editorRedactor}`);
-        if (!(redactor instanceof HTMLElement))
-            return null;
-        return redactor;
+        const editor = this.editor;
+        const redactor = editor?.ui?.nodes?.redactor;
+        if (redactor instanceof HTMLElement)
+            return redactor;
+        const holder = this.getEditorHolder();
+        if (holder) {
+            const redactorInHolder = holder.querySelector(`.${this.EditorCSS.editorRedactor}`);
+            if (redactorInHolder instanceof HTMLElement)
+                return redactorInHolder;
+        }
+        return document.querySelector(`.${this.EditorCSS.editorRedactor}`);
     }
     getEditorHolder() {
-        return this.editor?.ui.wrapper ??
-            document.querySelector(`#${this.editor?.configuration.holder} .${this.EditorCSS.editorWrapper}`) ??
-            document.querySelector(`.${this.EditorCSS.editorWrapper}`);
+        const editor = this.editor;
+        const wrapper = editor?.ui?.nodes?.wrapper;
+        if (wrapper instanceof HTMLElement)
+            return wrapper;
+        const holder = editor?.configuration?.holder;
+        if (holder) {
+            if (typeof holder === 'string') {
+                const holderElement = document.getElementById(holder)?.querySelector(`.${this.EditorCSS.editorWrapper}`);
+                if (holderElement instanceof HTMLElement)
+                    return holderElement;
+            }
+            if (holder instanceof HTMLElement) {
+                const wrapperInHolder = holder.querySelector(`.${this.EditorCSS.editorWrapper}`);
+                if (wrapperInHolder instanceof HTMLElement)
+                    return wrapperInHolder;
+            }
+        }
+        return document.querySelector(`.${this.EditorCSS.editorWrapper}`);
     }
     renderLockedBlocks(oldLockedBlocks, newLockedBlocks) {
         const blocksToUnlock = oldLockedBlocks.filter(ob => !newLockedBlocks.some(nb => nb.blockId === ob.blockId && nb.connectionId === ob.connectionId));
