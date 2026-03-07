@@ -1,5 +1,22 @@
+# Source files
 assets/
 src/
+cypress/
+cypress.config.ts
+
+# Build config
 webpack.config.js
+tsconfig.json
+
+# Test and dev files
 local-testing*
 dev-build.js
+cypress-tests.html
+index.html
+index.css
+config.json
+todos.md
+
+# Build artifacts to exclude
+dist/dev-build.js
+dist/*.map

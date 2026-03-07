@@ -1,23 +1,16 @@
 const path = require('path')
+const TerserPlugin = require('terser-webpack-plugin')
 
-module.exports = {
-    mode: 'development', // Change to 'production' for production build
-    entry: './src/index.ts', // Entry file for your TypeScript code
-    output: {
-        filename: 'bundle.js', // Output bundle file name
-        path: path.join(__dirname, '/dist'),
-        library: 'RealtimeCollabPlugin',
-        libraryTarget: 'umd',
-        libraryExport: 'default',
-    },
+const baseConfig = {
+    entry: './src/index.ts',
     resolve: {
-        extensions: ['.ts', '.tsx', '.js', '.css'], // File extensions to resolve
+        extensions: ['.ts', '.tsx', '.js', '.css'],
     },
     module: {
         rules: [
             {
                 test: /\.tsx?$/,
-                use: 'ts-loader', // Use ts-loader for TypeScript files
+                use: 'ts-loader',
                 exclude: /node_modules/,
             },
             {
@@ -27,3 +20,58 @@ module.exports = {
         ],
     },
 }
+
+module.exports = [
+    // ESM build for modern bundlers
+    {
+        ...baseConfig,
+        mode: 'production',
+        output: {
+            filename: 'index.js',
+            path: path.join(__dirname, '/dist'),
+            library: {
+                type: 'module',
+            },
+            module: true,
+        },
+        experiments: {
+            outputModule: true,
+        },
+        optimization: {
+            minimize: false,
+        },
+    },
+    // CommonJS build for Node.js
+    {
+        ...baseConfig,
+        mode: 'production',
+        output: {
+            filename: 'index.cjs',
+            path: path.join(__dirname, '/dist'),
+            library: {
+                name: 'RealtimeCollabPlugin',
+                type: 'commonjs2',
+                export: 'default',
+            },
+        },
+    },
+    // Minified UMD build for browsers
+    {
+        ...baseConfig,
+        mode: 'production',
+        output: {
+            filename: 'index.min.js',
+            path: path.join(__dirname, '/dist'),
+            library: {
+                name: 'RealtimeCollabPlugin',
+                type: 'umd',
+                export: 'default',
+            },
+            globalObject: 'this',
+        },
+        optimization: {
+            minimize: true,
+            minimizer: [new TerserPlugin()],
+        },
+    },
+]
