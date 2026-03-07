@@ -1,0 +1,1338 @@
+import EditorJS, {
+    type BlockAddedMutationType,
+    type BlockRemovedMutationType,
+    type BlockMovedMutationType,
+    type BlockChangedMutationType,
+    type BlockMutationEventMap,
+    BlockAPI,
+} from '@editorjs/editorjs'
+import { type SavedData } from '@editorjs/editorjs/types/data-formats/block-data'
+import { type PickFromConditionalType, type MakeConditionalType } from './UtilityTypes'
+import { throttle, debounce } from 'throttle-debounce'
+import './index.css'
+
+
+const UserInlineSelectionAsk = 'inline-selection-request'
+const UserInlineSelectionChangeType = 'inline-selection-change'
+
+const UserBlockSelectionChangeType = 'block-selection-change'
+const UserBlockDeletionChangeType = 'block-deletion-change'
+
+const UserDisconnectedType = 'user-disconnected'
+const UserPresencePingType = 'user-presence-ping'
+
+const BlockLockedType = 'block-locked'
+const BlockUnlockedType = 'block-unlocked'
+
+export type GroupCollabConfigOptions = {
+    editor: EditorJS
+    socket: INeededSocketFields
+} & Partial<LocalConfig>
+
+type LocalConfig = {
+    /**
+     * Delay to throttle block changes. Value is in ms
+     * @default 300
+     */
+    blockChangeThrottleDelay: number
+    /**
+     * Time to debounce block locking. Value is in ms
+     * @default 1500
+     */
+    blockLockDebounceTime: number
+    /**
+     * Time in ms to consider a user idle and remove their cursors and selections. This is used to prevent stale cursors/selections from users that have disconnected without triggering the disconnect event (e.g. by closing the laptop or losing internet connection).
+     * @default 60_000
+     */
+    externalUserIdleTimeout: number
+    /**
+     * For example the table tool triggers block changes even if the emitting user does not even interact with the block, which would also emit a locking event.
+     * In such cases you can add the tool's name here to enable checking its data for changes before locking that block. Only `data` and `tunes` are checked to be changed.
+     * @default ["table"]
+    */
+    toolsWithDataCheck: string[];
+    cursor?: { color?: string; selectionColor?: string; };
+    overrideStyles?: {
+        cursorClass?: string;
+        selectedClass?: string;
+        inlineSelectionClass?: string;
+        pendingDeletionClass?: string;
+        lockedBlockClass?: string;
+    };
+}
+
+export type MessageData =
+    | MakeConditionalType<{ index: number; block: SavedData }, typeof BlockAddedMutationType>
+    | MakeConditionalType<
+        {
+            blockId: string
+        },
+        typeof BlockRemovedMutationType
+    >
+    | MakeConditionalType<
+        {
+            block: SavedData
+            // in case block.id is not found
+            index: number
+        },
+        typeof BlockChangedMutationType
+    >
+    | MakeConditionalType<
+        {
+            fromBlockId: string
+            //used to guarantee sync between editors
+            toBlockIndex: number
+            toBlockId: string
+        },
+        typeof BlockMovedMutationType
+    >
+    | MakeConditionalType<
+        UserInlineSelectionData,
+        typeof UserInlineSelectionChangeType
+    >
+    | MakeConditionalType<{}, typeof UserInlineSelectionAsk>
+
+    | MakeConditionalType<{ connectionId: string }, typeof UserDisconnectedType>
+    | MakeConditionalType<{ connectionId: string }, typeof UserPresencePingType>
+
+    | MakeConditionalType<{ blockId: string; isDeletePending: boolean }, typeof UserBlockDeletionChangeType>
+    | MakeConditionalType<{ blockId: string; isSelected: boolean }, typeof UserBlockSelectionChangeType>
+
+    | MakeConditionalType<LockedBlock, typeof BlockLockedType>
+    | MakeConditionalType<LockedBlock, typeof BlockUnlockedType>
+
+type UserInlineSelectionData = {
+    elementXPath: string
+    blockId: string
+    containerWidth: number
+
+    connectionId: string;
+    color: string;
+    selectionColor: string;
+
+
+    elementNodeIndex: number
+    anchorOffset: number
+    focusOffset: number
+}
+type Rect = Pick<DOMRect, 'top' | 'left' | 'width'>
+type PossibleEventDetails = {
+    target: BlockAPI
+} & (
+        | MakeConditionalType<
+            { index: number },
+            typeof BlockAddedMutationType | typeof BlockChangedMutationType | typeof BlockRemovedMutationType
+        >
+        | MakeConditionalType<{ fromIndex: number; toIndex: number }, typeof BlockMovedMutationType>
+    )
+
+type LockedBlock = { blockId: string; connectionId: string }
+type EditorEvents = keyof BlockMutationEventMap
+type Events = EditorEvents | typeof UserInlineSelectionChangeType | typeof UserBlockSelectionChangeType | typeof UserBlockDeletionChangeType | typeof BlockLockedType | typeof BlockUnlockedType
+type ToolData = { data: Object, tunes: Object };
+
+export type INeededSocketFields = {
+    send(data: MessageData): void
+    on(callback: (data: MessageData) => void): void
+    off(): void;
+    connectionId: string;
+}
+
+export default class GroupCollab {
+    // Config
+    private editor: EditorJS
+    private socket: INeededSocketFields
+    private config: LocalConfig
+
+
+    private _isListening = false
+    private _currentEditorLockingBlockId: string | null = null;
+    private _lockedBlocks: LockedBlock[] = [];
+    private _externalUserSelections: UserInlineSelectionData[] = [];
+    private _customToolsInternalState: Record<string, ToolData> = {}
+
+    // events to ignore until next render
+    private ignoreEvents: Record<string, Set<Events>> = {}
+    private redactorObserver: MutationObserver
+    private toolboxObserver: MutationObserver;
+    private editorStyleElement: HTMLStyleElement;
+    private throttledBlockChange?: throttle<(target: BlockAPI, index: number) => Promise<void>> = undefined
+    private throttledInlineSelectionChange?: throttle<() => void> = undefined
+    private _debouncedBlockUnlockingsMap: Record<string, debounce<(blockId: string, connectionId: string) => void>> = {};
+    private localBlockStates: Record<string, Set<'selected' | 'focused' | "deleting">> = {}
+    private externalUserLastSeenMap: Record<string, number> = {}
+    private externalUsersCleanupInterval?: number
+    private presencePingInterval?: number
+
+    private editorBlockEvent = 'block changed'
+    private editorDomChangedEvent = 'redactor dom changed' // this might need more investigation before any usage
+    private blockIdAttributeName = 'data-id'
+    private inlineFakeCursorAttributeName = 'data-realtime-fake-inline-cursor'
+    private inlineFakeSelectionAttributeName = 'data-realtime-fake-inline-selection'
+    private connectionIdAttributeName = 'data-realtime-connection-id'
+    public constructor({ editor, socket, ...config }: GroupCollabConfigOptions) {
+        this.editor = editor
+        this.socket = socket
+        if (!this.socket.connectionId) {
+            console.error("{connectionId} is not set for EditorJSGroupCollab plugin. Some features might not work")
+            this.socket.connectionId = "random-" + crypto.randomUUID();
+        }
+
+
+        const defaultConfig: LocalConfig = {
+            blockChangeThrottleDelay: 300,
+            blockLockDebounceTime: 1500,
+            externalUserIdleTimeout: 60_000,
+            toolsWithDataCheck: ["table"],
+        }
+        this.config = {
+            ...defaultConfig,
+            ...(config ?? {}),
+        }
+        this.redactorObserver = new MutationObserver((mutations, observer) => {
+            for (let mutation of mutations) {
+                this.handleMutation(mutation)
+            }
+        })
+
+        this.toolboxObserver = new MutationObserver((mutations, observer) => {
+            const lastMutation = mutations[mutations.length - 1]
+            if (!lastMutation) return
+            this.handleToolboxMutation(lastMutation)
+        })
+
+        this.editorStyleElement = document.createElement('style')
+        this.setupStyleElement()
+        this.initializeCustomToolsState();
+    }
+
+    //#region Public API
+    public get isListening() {
+        return this._isListening
+    }
+
+    public get lockedBlocks(): LockedBlock[] {
+        return this._lockedBlocks.map(b => ({ ...b }))
+    }
+
+    public set lockedBlocks(value: LockedBlock[]) {
+        const oldLockedBlocks = this._lockedBlocks
+        this._lockedBlocks = value.map(b => ({ ...b }))
+        this.renderLockedBlocks(oldLockedBlocks, this._lockedBlocks)
+    }
+
+    public get currentLockedBlockId(): string | null {
+        return this._currentEditorLockingBlockId;
+    }
+
+    public get externalUserSelections(): UserInlineSelectionData[] {
+        return this._externalUserSelections.map(s => ({ ...s }))
+    }
+
+    public set externalUserSelections(value: UserInlineSelectionData[]) {
+        const oldSelections = this._externalUserSelections
+        this._externalUserSelections = value.map(s => ({ ...s }))
+        this.renderExternalUserSelections(oldSelections, this._externalUserSelections)
+    }
+    /**
+     * Remove event listeners on socket and editor
+     */
+    public unlisten() {
+        this.socket.off()
+        this.editor.off(this.editorBlockEvent, this.onEditorBlockEvent)
+        this.redactorObserver.disconnect()
+        this.toolboxObserver.disconnect()
+        document.removeEventListener('selectionchange', this.throttledInlineSelectionChange!)
+        document.removeEventListener('visibilitychange', this.onVisibilityChange)
+        window.removeEventListener('focus', this.onWindowFocus)
+        window.removeEventListener('blur', this.onWindowBlur)
+        window.removeEventListener("beforeunload", this.onDisconnect, { capture: true })
+        this.stopPreviousExternalUserInactivityTracking()
+        this.stopPreviousPresencePing()
+        this.socket.send({ type: UserDisconnectedType, connectionId: this.socket.connectionId })
+
+        // remove cursors, selections and block lockings
+        this.externalUserSelections = []
+        this.lockedBlocks = []
+        this.emptyThrottledEmiters()
+
+        this._isListening = false
+    }
+    /**
+     * Start listening for events.
+     */
+    public listen() {
+        this.setupThrottledEmiters()
+        this.socket.on(this.onReceiveChange)
+        this.editor.on(this.editorBlockEvent, this.onEditorBlockEvent)
+        const redactor = this.getRedactor();
+        if (!redactor) {
+            console.error("Could not initialize redactor observer.")
+            return
+        }
+        this.redactorObserver.observe(redactor, {
+            childList: true,
+            attributes: true,
+            attributeFilter: ['class'],
+            subtree: true,
+        })
+        const toolboxSettingsEl = this.getEditorHolder()?.querySelector(`.${this.EditorCSS.toolbarSettings}`) ?? document.querySelector(`.${this.EditorCSS.toolbarSettings}`)
+        if (toolboxSettingsEl)
+            this.toolboxObserver.observe(toolboxSettingsEl, {
+                childList: true,
+                attributes: true,
+                attributeFilter: ["class"],
+                subtree: true
+            })
+        else
+            console.error("Could not initialize toolbox observer.")
+        if (this.throttledInlineSelectionChange)
+            document.addEventListener('selectionchange', this.throttledInlineSelectionChange)
+        document.addEventListener('visibilitychange', this.onVisibilityChange)
+        window.addEventListener('focus', this.onWindowFocus)
+        window.addEventListener('blur', this.onWindowBlur)
+        window.addEventListener("beforeunload", this.onDisconnect, { capture: true })
+
+        this._isListening = true
+        this.startExternalUserInactivityTracking()
+        this.startPresencePing()
+
+        this.syncExternalCursors();
+    }
+
+    /**
+     * Manually trigger cursor syncronization for other users. This is already called when a new user joins and wants to see other users' cursors, but can be useful in other edge cases as well.
+     */
+    public syncExternalCursors() {
+        if (!this.isListening) return;
+
+        this.externalUserSelections = []
+        this.socket.send({ type: UserInlineSelectionAsk })
+    }
+
+    public getSelectionAsData(): PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType> | null {
+        if (!document.hasFocus()) return null
+        if (document.visibilityState !== 'visible') return null
+
+        const selection = document.getSelection()
+        if (!selection) return null
+        if (!selection.rangeCount) return null
+
+        const { anchorNode, anchorOffset, focusOffset } = selection
+        if (!anchorNode) return null
+        if (!anchorNode.isConnected) return null
+
+        if (!this.isNodeInsideOfEditor(anchorNode)) return null
+
+        const { parentElement } = anchorNode
+        if (!parentElement) return null
+
+        const contentAndBlockId = this.getContentAndBlockIdFromNode(anchorNode)
+        if (!contentAndBlockId) return null
+        const { blockId, contentElement } = contentAndBlockId
+
+        const elementNodeIndex = this.getNodeRelativeChildIndex(anchorNode)
+        if (elementNodeIndex === null) return null
+        const path = this.getElementXPath(parentElement)
+        const containerWidth = contentElement.clientWidth
+
+        const data: PickFromConditionalType<MessageData, typeof UserInlineSelectionChangeType> = {
+            type: UserInlineSelectionChangeType,
+            blockId,
+            elementXPath: path,
+            containerWidth,
+            anchorOffset,
+            focusOffset,
+            elementNodeIndex,
+            // rects: finalRects,
+
+            color: this.config.cursor?.color ?? '',
+            selectionColor: this.config.cursor?.selectionColor ?? '',
+            connectionId: this.socket.connectionId
+        }
+
+        return data
+    }
+
+    //#endregion
+    //#region Private APIs
+
+    private get CSS() {
+        return {
+            selected: 'cdx-realtime-block--selected',
+            inlineCursor: 'cdx-realtime-inline-cursor',
+            inlineSelection: 'cdx-realtime-inline-selection',
+            deletePending: "cdx-realtime-block--delete-pending",
+            lockedBlock: "cdx-realtime-block--locked",
+        }
+    }
+    private get EditorCSS() {
+        return {
+            baseBlock: 'ce-block',
+            focused: 'ce-block--focused',
+            selected: 'ce-block--selected',
+            editorWrapper: "codex-editor",
+            editorRedactor: 'codex-editor__redactor',
+            blockContent: 'ce-block__content',
+            toolbar: "ce-toolbar",
+            toolbarSettings: "ce-settings",
+            toolbarDeleteSetting: "[data-item-name='delete']",
+            table: {
+                row: "tc-row",
+                cell: "tc-cell"
+            }
+        }
+    }
+
+    private handleMutation(mutation: MutationRecord) {
+        if (mutation.type !== 'attributes') return
+        const { target } = mutation
+        if (!(target instanceof HTMLElement)) return
+
+        const isSelected = target.classList.contains(this.EditorCSS.selected)
+        const isFocused = target.classList.contains(this.EditorCSS.focused)
+        const blockId = target.getAttribute(this.blockIdAttributeName)
+        if (!blockId) return
+        // we need to save the current selected & focus state for each block or else we are sending too much data through socket
+        if (this.localBlockStates[blockId]?.has('selected') != isSelected) {
+            if (this.ignoreEvents[blockId]?.has(UserBlockSelectionChangeType)) return
+            this.localBlockStates[blockId] ??= new Set()
+
+            if (isSelected) this.localBlockStates[blockId].add('selected')
+            else this.localBlockStates[blockId].delete('selected')
+
+            this.socket.send({
+                type: UserBlockSelectionChangeType,
+                blockId,
+                isSelected,
+            })
+        }
+
+        // Focused class doesnt have any important styles fo i wont implement this now
+        // if (this.localBlockStates[blockId]?.has('focused') != isFocused) {
+        //     this.localBlockStates[blockId] ??= new Set()
+
+        //     if (isFocused) this.localBlockStates[blockId].add('focused')
+        //     else this.localBlockStates[blockId].delete('focused')
+        // }
+
+        if (!this.localBlockStates[blockId].size) delete this.localBlockStates[blockId]
+    }
+
+    private handleToolboxMutation(mutation: MutationRecord): void {
+        const { target } = mutation
+        if (!(target instanceof HTMLElement)) return
+
+        //? This might not work for all editor versions
+        const isToolbarClosing = target.innerHTML === '';
+
+        const currentIndex = this.editor.blocks.getCurrentBlockIndex()
+        const blockApi = this.editor.blocks.getBlockByIndex(currentIndex)
+        if (!blockApi) return;
+
+        let isDeletePending = false;
+        if (!isToolbarClosing) {
+            const toolboxDeleteSetting = this.getEditorHolder()?.querySelector(`.${this.EditorCSS.toolbar} ${this.EditorCSS.toolbarDeleteSetting}`)
+            if (!(toolboxDeleteSetting instanceof HTMLElement)) return;
+
+            isDeletePending = toolboxDeleteSetting.classList.contains("ce-popover-item--confirmation")
+        }
+
+        const blockId = blockApi.id;
+
+        if (this.localBlockStates[blockId]?.has('deleting') != isDeletePending) {
+            if (this.ignoreEvents[blockId]?.has(UserBlockDeletionChangeType)) return
+            this.localBlockStates[blockId] ??= new Set()
+
+            if (isDeletePending) this.localBlockStates[blockId].add('deleting')
+            else this.localBlockStates[blockId].delete('deleting')
+
+            this.socket.send({
+                type: UserBlockDeletionChangeType,
+                blockId,
+                isDeletePending
+            })
+        }
+    }
+
+    //#region Inline Selection Change Handling
+    private onInlineSelectionChange = (e?: Event) => {
+        const data = this.getSelectionAsData()
+        if (!data) return
+        const blockId = data.blockId
+        // this makes blocks be at least up to date before trying to set the cursor (which uses selections on actual dom elements)
+        const blockIsLocked = blockId === this._currentEditorLockingBlockId
+        if (!blockIsLocked) {
+            this.socket.send(data);
+            return;
+        }
+        setTimeout(() => {
+            this.socket.send(data)
+        }, 40)
+    }
+
+    private onDisconnect = (e: Event) => {
+        this.socket.send({ type: UserDisconnectedType, connectionId: this.socket.connectionId })
+    }
+
+    private onVisibilityChange = () => {
+        if (!this.isListening) return
+        if (document.visibilityState !== 'visible') return
+
+        this.syncExternalCursors()
+        this.onInlineSelectionChange()
+    }
+
+    private onWindowFocus = () => {
+        if (!this.isListening) return
+
+        this.syncExternalCursors()
+        this.onInlineSelectionChange()
+    }
+
+    private onWindowBlur = () => {
+        if (!this.isListening) return
+        this.getFakeSelections({ connectionId: this.socket.connectionId })?.forEach(selection => selection.remove())
+        this.getFakeCursors({ connectionId: this.socket.connectionId })?.forEach(cursor => cursor.remove())
+    }
+
+    //#region Receive Changes Handling
+    private onReceiveChange = (response: MessageData) => {
+        this.markExternalUserSeen(response)
+        switch (response.type) {
+            case 'block-added': {
+                const { index, block } = response
+                this.addBlockToIgnoreListUntilNextRender(block.id, response.type)
+                this.editor.blocks.insert(block.tool, block.data, null, index, false, false, block.id)
+                const shouldHaveInternalState = this.config.toolsWithDataCheck.includes(block.tool)
+                if (shouldHaveInternalState) {
+                    this._customToolsInternalState[block.id] = { data: block.data, tunes: (block as any).tunes ?? {} };
+                }
+                break
+            }
+            case 'block-changed': {
+                const { index, block } = response
+                this.addBlockToIgnoreListUntilNextRender(block.id, response.type)
+                const shouldHaveInternalState = this.config.toolsWithDataCheck.includes(block.tool)
+                if (shouldHaveInternalState) {
+                    this._customToolsInternalState[block.id] = { data: block.data, tunes: (block as any).tunes ?? {} };
+                }
+                const customClassList = this.getDOMBlockById(block.id)?.classList
+
+                const blockApi = this.editor.blocks.getById(block.id)
+                if (!blockApi) return;
+
+                this.editor.blocks
+                    .update(block.id, block.data)
+                    .catch((e) => {
+                        if (e.message === `Block with id "${block.id}" not found`) {
+                            this.addBlockToIgnoreListUntilNextRender(block.id, 'block-added')
+                            this.editor.blocks.insert(block.tool, block.data, null, index, false, false, block.id)
+                        }
+                    })
+                    .then(() => {
+                        const lockedBlock = this.lockedBlocks.find(b => b.blockId === block.id && b.connectionId !== this.socket.connectionId)
+                        if (lockedBlock) {
+                            this.renderLockedBlocks([], [lockedBlock])
+                        }
+
+                        // some blocks when being selected emit a block-changed event
+                        if (customClassList?.contains(this.CSS.selected)) {
+                            const domBlock = this.getDOMBlockById(block.id);
+                            if (!domBlock) return;
+                            domBlock.classList.add(this.CSS.selected)
+                            if (this.config.overrideStyles?.selectedClass)
+                                domBlock.classList.add(this.config.overrideStyles.selectedClass)
+                        }
+                    })
+                break
+            }
+            case 'block-moved': {
+                const { toBlockId, fromBlockId, toBlockIndex } = response
+                const toIndex = this.editor.blocks.getBlockIndex(toBlockId)
+                const fromIndex = this.editor.blocks.getBlockIndex(fromBlockId)
+
+                const blocksAreNowInSync = toBlockIndex === fromIndex
+                if (blocksAreNowInSync) return
+
+                this.addBlockToIgnoreListUntilNextRender(fromBlockId, response.type)
+                this.editor.blocks.move(toIndex, fromIndex)
+
+                // Remove selections for affected blocks
+                this.externalUserSelections = this._externalUserSelections.filter(
+                    s => s.blockId !== fromBlockId && s.blockId !== toBlockId
+                )
+
+                break
+            }
+
+            case 'block-removed': {
+                const { blockId } = response
+                this.addBlockToIgnoreListUntilNextRender(blockId, response.type)
+                const blockIndex = this.editor.blocks.getBlockIndex(blockId)
+                const blockName = this.editor.blocks.getBlockByIndex(blockIndex)?.name ?? ""
+                this.editor.blocks.delete(blockIndex);
+                const shouldHaveInternalState = this.config.toolsWithDataCheck.includes(blockName)
+                if (shouldHaveInternalState) {
+                    delete this._customToolsInternalState[blockId];
+                }
+                // Remove selections for deleted block
+                this.externalUserSelections = this._externalUserSelections.filter(s => s.blockId !== blockId)
+                break
+            }
+            case 'block-selection-change': {
+                const { blockId, isSelected } = response
+                this.addBlockToIgnoreListUntilNextRender(blockId, response.type)
+                const block = this.getDOMBlockById(blockId)
+                if (!block) return
+
+                if (isSelected) {
+                    block.classList.add(this.CSS.selected)
+                    if (this.config.overrideStyles?.selectedClass)
+                        block.classList.add(this.config.overrideStyles.selectedClass)
+                }
+                else {
+                    block.classList.remove(this.CSS.selected)
+                    if (this.config.overrideStyles?.selectedClass)
+                        block.classList.remove(this.config.overrideStyles.selectedClass)
+                }
+
+                break
+            }
+
+            case 'block-deletion-change': {
+                const { blockId, isDeletePending } = response
+                this.addBlockToIgnoreListUntilNextRender(blockId, response.type)
+                const block = this.getDOMBlockById(blockId)
+                if (!block) return
+
+                if (isDeletePending) {
+                    block.classList.add(this.CSS.deletePending)
+                    if (this.config.overrideStyles?.pendingDeletionClass)
+                        block.classList.add(this.config.overrideStyles.pendingDeletionClass)
+                } else {
+                    block.classList.remove(this.CSS.deletePending)
+                    if (this.config.overrideStyles?.pendingDeletionClass)
+                        block.classList.remove(this.config.overrideStyles.pendingDeletionClass)
+                }
+                break;
+            }
+
+            case 'inline-selection-change': {
+                const { type, elementXPath, blockId, connectionId, anchorOffset, elementNodeIndex, focusOffset, color, selectionColor, containerWidth } = response
+
+                // Build the new selection data
+                const newSelectionData: UserInlineSelectionData = {
+                    elementXPath,
+                    blockId,
+                    connectionId,
+                    anchorOffset,
+                    focusOffset,
+                    elementNodeIndex,
+                    containerWidth,
+                    color,
+                    selectionColor,
+                }
+
+                // Update state: remove old selection for this connectionId, add new one
+                const updatedSelections = this._externalUserSelections.filter(s => s.connectionId !== connectionId)
+                updatedSelections.push(newSelectionData)
+                this.externalUserSelections = updatedSelections
+                break
+            }
+
+            case UserInlineSelectionAsk: {
+                this.onInlineSelectionChange();
+                break;
+            }
+
+            case UserDisconnectedType: {
+                const { connectionId } = response
+                this.externalUserSelections = this._externalUserSelections.filter(s => s.connectionId !== connectionId)
+                this.lockedBlocks = this.lockedBlocks.filter(b => b.connectionId !== connectionId)
+                delete this.externalUserLastSeenMap[connectionId]
+                break
+            }
+
+            case UserPresencePingType: {
+                break
+            }
+
+            case BlockLockedType: {
+                const { blockId, connectionId } = response
+                const alreadyLocked = this.lockedBlocks.some(b => b.blockId === blockId)
+                if (alreadyLocked) break;
+                this.lockedBlocks = [...this.lockedBlocks, { blockId, connectionId }]
+                this.addBlockToIgnoreListUntilNextRender(blockId, 'block-changed')
+
+                const blockApi = this.editor.blocks.getById(blockId)
+                if (!blockApi) return;
+
+                //? This fixes the visual flickering btw when updating block data from remote sources
+                const Xpath = this.getElementXPath(blockApi.holder);
+                this.addStyleToDOM(Xpath, {
+                    animationName: 'none',
+                }, blockId)
+
+                // Remove selections for locked block
+                this.externalUserSelections = this._externalUserSelections.filter(s => s.blockId !== blockId)
+                break;
+            }
+
+            case BlockUnlockedType: {
+                const { blockId, connectionId } = response
+                this.lockedBlocks = this.lockedBlocks.filter(b => !(b.blockId === blockId && b.connectionId === connectionId))
+                this.addBlockToIgnoreListUntilNextRender(blockId, 'block-changed')
+                this.removeStyleFromDOM(blockId);
+                break;
+            }
+
+            default: {
+            }
+        }
+    }
+
+    //#region Emit Editor Block Event Handling
+    private onEditorBlockEvent = async (data: any) => {
+        if (!(data?.event instanceof CustomEvent) || !data.event) {
+            console.error('block changed but its not custom event')
+            return
+        }
+        const { event } = data
+        if (!this.validateEventDetail(event)) return
+        const type = event.type as EditorEvents
+        const { target, ...otherData } = event.detail as PossibleEventDetails
+        otherData.type = type
+        const targetId = target.id
+
+        if (this.ignoreEvents[targetId]?.has(type)) return
+
+        const isBlockLocked = this.lockedBlocks.some(b => b.blockId === targetId && b.connectionId !== this.socket.connectionId)
+        if (isBlockLocked) return
+
+        const shouldBlockHaveInternalState = this.config.toolsWithDataCheck.includes(target.name)
+
+
+        // block changes are throttled, thus se have this separate from the other DOM events
+        if (type === 'block-changed') {
+            // some tools, such as table, emit block-changed events even if i click on another block in the redactor 🤦‍♂️
+            if (shouldBlockHaveInternalState) {
+                // TODO this might cause an async race.
+                const savedData = await target.save()
+                if (!savedData) return
+
+                const dataToCompareWith = { data: savedData.data, tunes: (savedData as any).tunes };
+                const hasSameData = this.compareToolsData(this._customToolsInternalState[targetId], dataToCompareWith);
+                if (hasSameData && this._currentEditorLockingBlockId !== targetId) return; // skip this nonsense if false alarms are detected
+                this._customToolsInternalState[targetId] = dataToCompareWith;
+            }
+            if (this._currentEditorLockingBlockId == targetId) {
+                this.debouncedBlockUnlocking(targetId, this.socket.connectionId)
+            }
+            else {
+                this._currentEditorLockingBlockId = targetId;
+                this.socket.send({ type: BlockLockedType, blockId: targetId, connectionId: this.socket.connectionId })
+
+                // Remove any other user's cursor/selection in this block
+                this.externalUserSelections = this._externalUserSelections.filter(s => s.blockId !== targetId)
+                this.debouncedBlockUnlocking(targetId, this.socket.connectionId)
+            }
+        }
+
+        //save after dom changes have been propagated to the necessary tools
+        setTimeout(async () => {
+            if (type === 'block-changed') {
+                if (!('index' in otherData) || typeof otherData.index !== 'number') return
+                this.throttledBlockChange?.(target, otherData.index ?? 0)
+                setTimeout(() => {
+                    this.throttledInlineSelectionChange?.()
+                }, 0)
+                return
+            }
+
+            const savedData = await target.save()
+            if (!savedData) return
+
+            const socketData: Partial<MessageData> = {
+                type,
+                block: savedData,
+            }
+            if (socketData.type === 'block-added') {
+                socketData.index = (otherData as PickFromConditionalType<PossibleEventDetails, 'block-added'>).index
+                if (shouldBlockHaveInternalState)
+                    this._customToolsInternalState[targetId] = { data: savedData.data, tunes: (savedData as any).tunes ?? {} };
+            }
+            if (socketData.type === 'block-removed') {
+                socketData.blockId = targetId
+                if (shouldBlockHaveInternalState)
+                    delete this._customToolsInternalState[targetId];
+            }
+            if (socketData.type === 'block-moved') {
+                const { fromIndex, toIndex } = otherData as PickFromConditionalType<PossibleEventDetails, 'block-moved'>
+                socketData.fromBlockId = targetId
+                socketData.toBlockIndex = toIndex
+                //at this point the blocks already switched places
+                socketData.toBlockId = this.editor.blocks.getBlockByIndex(fromIndex)?.id
+            }
+            this.socket.send(socketData as MessageData)
+        }, 0)
+    }
+
+    //#region Throttled & Debounced Handlers
+    private setupThrottledEmiters() {
+        this.throttledInlineSelectionChange = throttle(this.config.blockChangeThrottleDelay, (event: Event) => {
+            if (!this.isListening) return
+
+            this.onInlineSelectionChange(event);
+        })
+
+        this.throttledBlockChange = throttle(this.config.blockChangeThrottleDelay, async (target: BlockAPI, index: number) => {
+            if (!this.isListening) return
+            const targetId = target.id
+            const savedData = await target.save()
+            if (!savedData) return
+
+            this.applyNeccessaryChanges(target, savedData);
+            const socketData: MessageData = {
+                type: 'block-changed',
+                block: savedData,
+                index,
+            }
+
+            if (!this.isListening) return
+            this.socket.send(socketData)
+            this.addBlockToIgnoreListUntilNextRender(targetId, 'block-changed')
+        })
+    }
+
+    private emptyThrottledEmiters() {
+        this.throttledBlockChange = undefined
+        this.throttledInlineSelectionChange = undefined
+    }
+
+    private debouncedBlockUnlocking(blockId: string, connectionId: string) {
+        const debouncedFunc = this._debouncedBlockUnlockingsMap?.[blockId];
+        if (debouncedFunc) {
+            debouncedFunc(blockId, connectionId);
+            return;
+        }
+        const newDebouncedFunc = debounce(this.config.blockLockDebounceTime, (bId: string, connId: string) => {
+            this.socket.send({ type: BlockUnlockedType, blockId: bId, connectionId: connId })
+            if (this.currentLockedBlockId === bId)
+                this._currentEditorLockingBlockId = null;
+            delete this._debouncedBlockUnlockingsMap?.[bId];
+        });
+        this._debouncedBlockUnlockingsMap = {
+            ...(this._debouncedBlockUnlockingsMap),
+            [blockId]: newDebouncedFunc
+        }
+        newDebouncedFunc(blockId, connectionId);
+    }
+
+
+    //#region DOM & utils
+    private getFakeCursors({ blockId, connectionId }: Partial<Record<"blockId" | "connectionId", string>>) {
+        const editorHolder = this.getEditorHolder()
+        if (!blockId && !connectionId) return editorHolder?.querySelectorAll(`[${this.inlineFakeCursorAttributeName}]`)
+        const connectionQuery = connectionId ? `[${this.connectionIdAttributeName}='${connectionId}']` : ""
+        const blockIdQuery = blockId ? `[${this.inlineFakeCursorAttributeName}='${blockId}']` : "";
+        const domCursors = editorHolder?.querySelectorAll(
+            `${blockIdQuery}${connectionQuery}`,
+        )
+        return domCursors
+    }
+
+    private createFakeCursor({ blockId, connectionId, color }: Record<"blockId" | "connectionId" | "color", string>) {
+        const cursor = document.createElement('div')
+        cursor.setAttribute(this.inlineFakeCursorAttributeName, blockId)
+        cursor.setAttribute(this.connectionIdAttributeName, connectionId)
+        cursor.classList.add(this.CSS.inlineCursor)
+        if (color) cursor.style.setProperty('--realtime-inline-cursor-color', color)
+        const { cursorClass } = this.config.overrideStyles ?? {}
+        if (cursorClass) cursor.classList.add(...cursorClass.split(' '))
+
+        return cursor
+    }
+
+    private getFakeSelections({ blockId, connectionId }: Partial<Record<"blockId" | "connectionId", string>>): NodeListOf<Element> | undefined {
+        const connectionQuery = connectionId ? `[${this.connectionIdAttributeName}='${connectionId}']` : ""
+        return this.getEditorHolder()?.querySelectorAll(
+            `[${this.inlineFakeSelectionAttributeName}${blockId ? `='${blockId}'` : ""}]${connectionQuery}`,
+        )
+    }
+
+    private createSelectionElement({ blockId, connectionId }: Record<"blockId" | "connectionId", string>) {
+        const selection = document.createElement('div')
+        selection.setAttribute(this.inlineFakeSelectionAttributeName, blockId)
+        selection.setAttribute(this.connectionIdAttributeName, connectionId)
+        selection.classList.add(this.CSS.inlineSelection)
+        if (this.config.overrideStyles?.inlineSelectionClass)
+            selection.classList.add(this.config.overrideStyles.inlineSelectionClass)
+
+        return selection
+    }
+
+    private markExternalUserSeen(data: MessageData) {
+        if (!('connectionId' in data)) return
+
+        const { connectionId } = data
+        if (!connectionId || connectionId === this.socket.connectionId) return
+
+        this.externalUserLastSeenMap[connectionId] = Date.now()
+    }
+
+    private startExternalUserInactivityTracking() {
+        this.stopPreviousExternalUserInactivityTracking()
+        this.externalUsersCleanupInterval = window.setInterval(() => {
+            this.cleanupStaleExternalUsers()
+        }, Math.max(1_000, Math.floor(this.config.externalUserIdleTimeout / 3)))
+    }
+
+    private stopPreviousExternalUserInactivityTracking() {
+        if (!this.externalUsersCleanupInterval) return
+
+        window.clearInterval(this.externalUsersCleanupInterval)
+        this.externalUsersCleanupInterval = undefined
+    }
+
+    private cleanupStaleExternalUsers() {
+        const now = Date.now()
+        const staleConnectionIds = Object.entries(this.externalUserLastSeenMap)
+            .filter(([, lastSeen]) => now - lastSeen >= this.config.externalUserIdleTimeout)
+            .map(([connectionId]) => connectionId)
+
+        if (!staleConnectionIds.length) return
+
+        const staleConnectionIdSet = new Set(staleConnectionIds)
+
+        // Remove selections for stale users via setter
+        this.externalUserSelections = this._externalUserSelections.filter(
+            s => !staleConnectionIdSet.has(s.connectionId)
+        )
+
+        // Also clean up locked blocks and last seen map
+        this.lockedBlocks = this.lockedBlocks.filter(
+            b => !staleConnectionIdSet.has(b.connectionId)
+        )
+        for (const connectionId of staleConnectionIds) {
+            delete this.externalUserLastSeenMap[connectionId]
+        }
+    }
+
+    private startPresencePing() {
+        this.stopPreviousPresencePing()
+        this.presencePingInterval = window.setInterval(() => {
+            if (!this.isListening) return
+            if (document.visibilityState !== 'visible') return
+            if (!document.hasFocus()) return
+
+            this.socket.send({ type: UserPresencePingType, connectionId: this.socket.connectionId })
+        }, Math.max(1_000, Math.floor(this.config.externalUserIdleTimeout / 2)))
+    }
+
+    private stopPreviousPresencePing() {
+        if (!this.presencePingInterval) return
+
+        window.clearInterval(this.presencePingInterval)
+        this.presencePingInterval = undefined
+    }
+
+    private validateEventDetail(ev: CustomEvent): ev is CustomEvent<PossibleEventDetails> {
+        return (
+            typeof ev.detail === 'object' &&
+            ev.detail &&
+            (('index' in ev.detail && typeof ev.detail.index === 'number') ||
+                ('fromIndex' in ev.detail &&
+                    typeof ev.detail.fromIndex === 'number' &&
+                    'toIndex' in ev.detail &&
+                    typeof ev.detail.toIndex === 'number')) &&
+            'target' in ev.detail &&
+            typeof ev.detail.target === 'object' &&
+            ev.detail.target
+        )
+    }
+
+    private addBlockToIgnoreListUntilNextRender(blockId: string, type: Events) {
+        this.addBlockToIgnorelist(blockId, type)
+        setTimeout(() => {
+            this.removeBlockFromIgnorelist(blockId, type)
+        }, 0)
+    }
+    private addBlockToIgnorelist(blockId: string, type: Events) {
+        if (!this.ignoreEvents[blockId]) this.ignoreEvents[blockId] = new Set<Events>()
+        this.ignoreEvents[blockId].add(type)
+    }
+    private removeBlockFromIgnorelist(blockId: string, type: Events) {
+        if (!this.ignoreEvents[blockId]) return
+        this.ignoreEvents[blockId].delete(type)
+        if (!this.ignoreEvents[blockId].size) delete this.ignoreEvents[blockId]
+    }
+
+    private addStyleToDOM(selector: string, styles: Partial<CSSStyleDeclaration>, nonce: string) {
+        const styleElement = this.editorStyleElement;
+        if (!styleElement) return;
+        const stringifiedStyles = this.stringifyStyles(styles);
+
+        const comment = document.createComment(`nonce: ${nonce}`);
+        styleElement.insertAdjacentText('beforeend', `${selector} {  ${stringifiedStyles} }`);
+        styleElement.insertBefore(comment, styleElement.lastChild);
+    }
+
+    private removeStyleFromDOM(nonce: string) {
+        const styleElement = this.editorStyleElement;
+        if (!styleElement) return;
+        const comments = Array.from(styleElement.childNodes).filter(n => n.nodeType === Node.COMMENT_NODE) as Comment[];
+        const targetComment = comments.find(c => c.data.trim() === `nonce: ${nonce}`);
+        if (!targetComment) return;
+
+        targetComment.nextSibling?.remove();
+        targetComment.remove();
+
+    }
+
+    private stringifyStyles(styleObject: Partial<CSSStyleDeclaration>) {
+        const sheet = new CSSStyleSheet();
+        sheet.insertRule(':root {}');
+
+        const rule = sheet.cssRules[0];
+        if (!rule || !(rule instanceof CSSStyleRule)) return;
+
+        Object.assign(rule.style, styleObject);
+        return rule.style.cssText;
+    }
+
+    private getDOMBlockById(blockId: string) {
+        const block = this.getEditorHolder()?.querySelector(`[${this.blockIdAttributeName}='${blockId}']`)
+        if (block instanceof HTMLElement) return block
+        return null
+    }
+
+    private getRedactor(): HTMLElement | null {
+        const editor = this.editor as any
+        const redactor = editor?.ui?.nodes?.redactor;
+        if (redactor instanceof HTMLElement) return redactor;
+        const holder = this.getEditorHolder();
+        if (holder) {
+            const redactorInHolder = holder.querySelector(`.${this.EditorCSS.editorRedactor}`)
+            if (redactorInHolder instanceof HTMLElement) return redactorInHolder
+        }
+        return document.querySelector(`.${this.EditorCSS.editorRedactor}`)
+    }
+
+    private getEditorHolder(): HTMLElement | null {
+        const editor = this.editor as any
+        const wrapper = editor?.ui?.nodes?.wrapper
+        if (wrapper instanceof HTMLElement) return wrapper
+        const holder = editor?.configuration?.holder
+        if (holder) {
+            if (typeof holder === 'string') {
+                const holderElement = document.getElementById(holder)?.querySelector(`.${this.EditorCSS.editorWrapper}`)
+                if (holderElement instanceof HTMLElement) return holderElement
+            }
+            if (holder instanceof HTMLElement) {
+                const wrapperInHolder = holder.querySelector(`.${this.EditorCSS.editorWrapper}`)
+                if (wrapperInHolder instanceof HTMLElement) return wrapperInHolder
+            }
+        }
+        return document.querySelector(`.${this.EditorCSS.editorWrapper}`)
+    }
+
+    private renderLockedBlocks(oldLockedBlocks: LockedBlock[], newLockedBlocks: LockedBlock[]) {
+        const blocksToUnlock = oldLockedBlocks.filter(ob => !newLockedBlocks.some(nb => nb.blockId === ob.blockId && nb.connectionId === ob.connectionId))
+        const blocksToLock = newLockedBlocks.filter(nb => !oldLockedBlocks.some(ob => ob.blockId === nb.blockId && ob.connectionId === nb.connectionId))
+
+        const collabAttribute = 'data-realtime-collab-locked'
+        for (const block of blocksToUnlock) {
+            const domBlock = this.getDOMBlockById(block.blockId)
+            if (!domBlock) continue
+
+            const contentEditableElements = domBlock.querySelectorAll(`[contenteditable="false"][${collabAttribute}]`)
+            domBlock.classList.remove(this.CSS.lockedBlock)
+            contentEditableElements.forEach(el => {
+                el.setAttribute('contenteditable', 'true')
+                el.removeAttribute(collabAttribute)
+            })
+            if (this.config.overrideStyles?.lockedBlockClass)
+                domBlock.classList.remove(this.config.overrideStyles.lockedBlockClass)
+        }
+
+        for (const block of blocksToLock) {
+            const domBlock = this.getDOMBlockById(block.blockId)
+            if (!domBlock) continue
+
+            const contentEditableElements = domBlock.querySelectorAll('[contenteditable="true"]')
+            contentEditableElements.forEach(el => {
+                el.setAttribute('contenteditable', 'false')
+                el.setAttribute(collabAttribute, '')
+            })
+            domBlock.classList.add(this.CSS.lockedBlock)
+            if (this.config.overrideStyles?.lockedBlockClass)
+                domBlock.classList.add(this.config.overrideStyles.lockedBlockClass)
+        }
+
+    }
+
+    private renderExternalUserSelections(oldSelections: UserInlineSelectionData[], newSelections: UserInlineSelectionData[]) {
+        const editorHolder = this.getEditorHolder()
+        if (!editorHolder) return
+
+        // Find connectionIds to remove (in old but not in new)
+        const oldConnectionIds = new Set(oldSelections.map(s => s.connectionId))
+        const newConnectionIds = new Set(newSelections.map(s => s.connectionId))
+
+        // Remove DOM for connectionIds no longer in state
+        for (const connectionId of oldConnectionIds) {
+            if (!newConnectionIds.has(connectionId)) {
+                this.getFakeCursors({ connectionId })?.forEach(cursor => cursor.remove())
+                this.getFakeSelections({ connectionId })?.forEach(selection => selection.remove())
+            }
+        }
+
+        // For each new selection, check if it changed from old and re-render if so
+        for (const newSel of newSelections) {
+            const oldSel = oldSelections.find(s => s.connectionId === newSel.connectionId)
+            const hasChanged = !oldSel || !this.selectionsAreEqual(oldSel, newSel)
+
+            if (hasChanged) {
+                this.renderSingleExternalSelection(newSel, editorHolder)
+            }
+        }
+    }
+
+    private selectionsAreEqual(a: UserInlineSelectionData, b: UserInlineSelectionData): boolean {
+        return a.elementXPath === b.elementXPath &&
+            a.blockId === b.blockId &&
+            a.connectionId === b.connectionId &&
+            a.anchorOffset === b.anchorOffset &&
+            a.focusOffset === b.focusOffset &&
+            a.elementNodeIndex === b.elementNodeIndex &&
+            a.containerWidth === b.containerWidth &&
+            a.color === b.color &&
+            a.selectionColor === b.selectionColor
+    }
+
+    private renderSingleExternalSelection(selection: UserInlineSelectionData, editorHolder: Element) {
+        const { elementXPath, blockId, connectionId, anchorOffset, focusOffset, elementNodeIndex, color, selectionColor } = selection
+
+        // Remove existing DOM elements for this connectionId
+        this.getFakeCursors({ connectionId })?.forEach(cursor => cursor.remove())
+        this.getFakeSelections({ connectionId })?.forEach(sel => sel.remove())
+
+        // Validate that the block content exists
+        const blockContent = this.getDOMBlockById(blockId)?.querySelector(`.${this.EditorCSS.blockContent}`)
+        if (!blockContent) return
+
+        // Resolve XPath to actual DOM element
+        const parentElement = editorHolder.querySelector(elementXPath)
+        if (!(parentElement instanceof HTMLElement)) return
+
+        const nodeElement = parentElement.childNodes[elementNodeIndex]
+        if (!nodeElement) return
+
+        // TODO test this when anchor and focus are in different nodes, currently we only support selections within a single node
+        const calculatedSelectionRects = this.getBoundingClientRectForSelection(nodeElement, anchorOffset, focusOffset)
+        if (!calculatedSelectionRects) return
+
+        const parentElementRect = editorHolder.getBoundingClientRect()
+        const isSelection = anchorOffset !== focusOffset
+
+        if (isSelection) {
+            // Render selection highlights
+            for (let i = 0; i < calculatedSelectionRects.length; i++) {
+                const rect = calculatedSelectionRects.item(i)
+                if (!rect) continue
+
+                const selectionElement = this.createSelectionElement({ blockId, connectionId })
+                selectionElement.style.top = `${rect.top - parentElementRect.top}px`
+                selectionElement.style.left = `${rect.left - parentElementRect.left}px`
+                selectionElement.style.width = `${rect.width}px`
+                selectionElement.style.height = `${rect.height}px`
+                if (selectionColor) selectionElement.style.setProperty('--realtime-inline-selection-color', selectionColor)
+                editorHolder.insertAdjacentElement('beforeend', selectionElement)
+                this.addBlockToIgnoreListUntilNextRender(blockId, 'block-changed')
+            }
+        } else {
+            // Render cursor (collapsed selection)
+            const cursor = this.createFakeCursor({ connectionId, blockId, color })
+            const rect = calculatedSelectionRects.item(0)
+            if (!rect) return
+
+            const computedStyle = window.getComputedStyle(parentElement)
+            const lineHeight = computedStyle.lineHeight
+            const fontSize = computedStyle.fontSize
+
+            // Calculate actual line height in pixels
+            let lineHeightPx: number
+            if (lineHeight === 'normal') {
+                // Normal line-height is typically 1.2 times the font size
+                lineHeightPx = parseFloat(fontSize) * 1.2
+            } else if (lineHeight.endsWith('px')) {
+                lineHeightPx = parseFloat(lineHeight)
+            } else {
+                // If it's a unitless number, multiply by font size
+                lineHeightPx = parseFloat(lineHeight) * parseFloat(fontSize)
+            }
+
+            // Use the rect height as cursor height for better accuracy
+            const cursorHeight = rect.height
+
+            // Calculate vertical offset to center the cursor in the line
+            const verticalOffset = (lineHeightPx - cursorHeight) / 2
+
+            cursor.style.height = `${cursorHeight}px`
+            cursor.style.top = `${rect.top - parentElementRect.top + verticalOffset}px`
+            cursor.style.left = `${rect.left - parentElementRect.left}px`
+
+
+            editorHolder.insertAdjacentElement('beforeend', cursor)
+        }
+    }
+
+    // With stringify, the order of the keys might differ, so we need a deep comparison
+    private compareToolsData(toolData1: ToolData, toolData2: ToolData): boolean {
+        function recursiveCompare(obj1: any, obj2: any): boolean {
+            if (typeof obj1 !== typeof obj2) return false;
+            if (typeof obj1 !== 'object' || obj1 === null || obj2 === null) {
+                return obj1 === obj2;
+            }
+            const keys1 = Object.keys(obj1);
+            const keys2 = Object.keys(obj2);
+            if (keys1.length !== keys2.length) return false;
+            for (const key of keys1) {
+                if (!keys2.includes(key)) return false;
+                if (!recursiveCompare(obj1[key], obj2[key])) return false;
+            }
+            return true;
+        }
+        const value = recursiveCompare(toolData1, toolData2);
+        return value;
+    }
+    private initializeCustomToolsState() {
+        const allBlocks = (this.editor as any).configuration.data?.blocks ?? [];
+        for (const block of allBlocks) {
+            if (this.config.toolsWithDataCheck.includes(block.type)) {
+                this._customToolsInternalState[block.id] = { data: block.data, tunes: (block as any).tunes ?? {} };
+            }
+        }
+    }
+
+    private setupStyleElement() {
+        this.editorStyleElement.setAttribute('data-realtime-collab-styles', '')
+        this.getEditorHolder()?.insertAdjacentElement('afterbegin', this.editorStyleElement)
+    }
+
+    private getContentAndBlockIdFromNode(node: Node): { contentElement: HTMLElement; blockId: string } | null {
+        if (!this.isNodeInsideOfEditor(node)) return null
+        let el: HTMLElement | null = node.parentElement
+
+        const isContentElement = (el: HTMLElement | null) =>
+            el?.classList.contains(this.EditorCSS.blockContent) &&
+            el?.parentElement?.classList.contains(this.EditorCSS.baseBlock) &&
+            el?.parentElement.hasAttribute(this.blockIdAttributeName)
+        while (el && !isContentElement(el)) {
+            el = el.parentElement
+        }
+        if (!el) return null
+
+        const blockId = el.parentElement?.getAttribute(this.blockIdAttributeName)
+        if (!blockId) return null
+        return {
+            contentElement: el,
+            blockId,
+        }
+    }
+
+    private getBoundingClientRectForSelection(node: Node, anchorOffset: number, focusOffset: number): DOMRectList | null {
+        try {
+            const range = document.createRange()
+            const start = Math.min(anchorOffset, focusOffset)
+            const end = Math.max(anchorOffset, focusOffset)
+            range.setStart(node, start)
+            range.setEnd(node, end)
+            const rect = range.getClientRects()
+            return rect
+        } catch (e) {
+            const message = `Failed to set cursor/selection range for node. This can happen if the offsets are out of bounds for the given node (Data is not synced at the DOM level, even if json level is).`
+            console.error(message, { cause: e })
+            return null
+        }
+
+    }
+
+    private isNodeInsideOfEditor(node: Node) {
+        const redactor = (this.editor as any)?.ui?.nodes?.redactor
+        if (redactor instanceof HTMLElement) return redactor.contains(node)
+        const holder = (this.editor as any)?.configuration?.holder
+        if (holder && typeof holder === 'string') return document.getElementById(holder)?.contains(node)
+
+        let currentElement = node.parentElement
+        while (currentElement && currentElement !== document.body) {
+            const blockId = currentElement.getAttribute(this.blockIdAttributeName)
+            const isEditorBlockElement = currentElement.classList.contains(this.EditorCSS.baseBlock)
+            const isCurrentEditorElement = blockId && Boolean(this.editor.blocks.getById(blockId))
+            if (isEditorBlockElement && isCurrentEditorElement) return true
+            currentElement = currentElement.parentElement
+        }
+        return false
+    }
+
+    private getElementXPath(selectedNode: HTMLElement, omitCountForBlock = false) {
+        let element = selectedNode
+        // If the element does not have an ID, construct the XPath based on its ancestors
+        const paths = []
+        while (element.parentNode instanceof HTMLElement && !element.classList.contains(this.EditorCSS.editorRedactor)) {
+            const dataId = element.getAttribute(this.blockIdAttributeName)
+            let elementSelector = element.localName.toLowerCase()
+            if (dataId)
+                elementSelector += `[${this.blockIdAttributeName}='${dataId}']`
+
+            const ignoreNthChild = omitCountForBlock && dataId;
+            if (!ignoreNthChild && element.previousElementSibling) {
+                let sibling: Element | null = element
+                let count = 1
+                while ((sibling = sibling.previousElementSibling)) {
+                    count++
+                }
+                elementSelector += `:nth-child(${count})`
+            }
+            paths.unshift(elementSelector)
+            element = element.parentNode
+        }
+        paths.unshift(`.${this.EditorCSS.editorRedactor}`)
+        const directChildSelector = ' > '
+        return paths.join(directChildSelector)
+    }
+
+    private getNodeRelativeChildIndex(node: Node): number | null {
+        const { parentElement } = node
+        if (!parentElement) return null
+        for (let i = 0; i < parentElement.childNodes.length; i++) {
+            if (node === parentElement.childNodes[i]) return i
+        }
+
+        return null
+    }
+
+    private applyNeccessaryChanges(target: BlockAPI, savedData: SavedData) {
+        switch (target.name) {
+            case "table": {
+                const rows = target.holder.querySelectorAll(`.${this.EditorCSS.table.row}`);
+                rows.forEach((row, idx) => {
+                    const cells = Array.from(row.querySelectorAll(`.${this.EditorCSS.table.cell}`))
+                    const areAllEmpty = cells.every(cell => !cell.textContent?.trim())
+                    if (!areAllEmpty) return;
+
+                    // i need to make this row not disappear on one screen but remain on the other.
+                    const content = savedData.data?.content
+                    if (content instanceof Array) {
+                        content.splice(idx, 0,
+                            cells.map(c => c.textContent)
+                        )
+                    }
+                })
+                break;
+            }
+        }
+    }
+
+}

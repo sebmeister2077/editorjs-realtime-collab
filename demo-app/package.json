@@ -1,0 +1,28 @@
+{
+  "name": "test-editorjs",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@editorjs/editorjs": "^2.29.0",
+    "@editorjs/header": "^2.8.8",
+    "@editorjs/table": "^2.4.5",
+    "editorjs-realtime-collab": "^0.5.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "throttle-debounce": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@types/throttle-debounce": "^5.0.2",
+    "@vitejs/plugin-react": "^4.2.1",
+    "typescript": "^5.2.2",
+    "vite": "^5.0.8"
+  }
+}

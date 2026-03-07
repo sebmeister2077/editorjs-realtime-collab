@@ -9,6 +9,7 @@
 - [ ] Internal feature to temporary block ui cursors and selection changes while the container is being resized. Or some other solution (Must, Dependent on above)
 - [x] Add user presence and idle status. (Nice to have)
 - [x] Add option to disable showing remote cursors and selections.(Achievable using css styles) (Nice to have)
+- [ ] Posibility to change some config values while the editor is running (e.g. cursor color, throttle interval). (Nice to have)
 - [ ] Add heartbeat/keep-alive mechanism
 - [ ] Add positibility to handle display of other blocks state (e.g. pending deletions on tables, or other custom states). (Research) (Nice to have)
 - [ ] Add posibility to attach other elements to cursors (e.g. user name tags, or other custom elements). (Research) (Nice to have)
