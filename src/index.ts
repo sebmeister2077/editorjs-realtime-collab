@@ -203,7 +203,6 @@ export default class GroupCollab {
 
         this.editorStyleElement = document.createElement('style')
         this.setupStyleElement()
-        this.setupThrottledListeners()
         this.initializeCustomToolsState();
     }
 
@@ -255,6 +254,7 @@ export default class GroupCollab {
         // remove cursors, selections and block lockings
         this.externalUserSelections = []
         this.lockedBlocks = []
+        this.emptyThrottledEmiters()
 
         this._isListening = false
     }
@@ -262,6 +262,7 @@ export default class GroupCollab {
      * Start listening for events.
      */
     public listen() {
+        this.setupThrottledEmiters()
         this.socket.on(this.onReceiveChange)
         this.editor.on(this.editorBlockEvent, this.onEditorBlockEvent)
         const redactor = this.getRedactor();
@@ -778,7 +779,7 @@ export default class GroupCollab {
     }
 
     //#region Throttled & Debounced Handlers
-    private setupThrottledListeners() {
+    private setupThrottledEmiters() {
         this.throttledInlineSelectionChange = throttle(this.config.blockChangeThrottleDelay, (event: Event) => {
             if (!this.isListening) return
 
@@ -802,6 +803,11 @@ export default class GroupCollab {
             this.socket.send(socketData)
             this.addBlockToIgnoreListUntilNextRender(targetId, 'block-changed')
         })
+    }
+
+    private emptyThrottledEmiters() {
+        this.throttledBlockChange = undefined
+        this.throttledInlineSelectionChange = undefined
     }
 
     private debouncedBlockUnlocking(blockId: string, connectionId: string) {
