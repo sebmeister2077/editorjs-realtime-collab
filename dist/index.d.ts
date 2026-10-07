@@ -48,19 +48,31 @@ type LocalConfig = {
         lockedBlockClass?: string;
     };
 };
+export type BlockOpVersion = {
+    /**
+     * Monotonic per-block Lamport-clock version, used for last-write-wins conflict resolution.
+     * A higher version always supersedes a lower one for the same block id.
+     */
+    version: number;
+    /**
+     * connectionId of the client that produced this op. Used as a deterministic tie-breaker when
+     * two ops share the same version, so every client converges on the same winner.
+     */
+    origin: string;
+};
 export type MessageData = MakeConditionalType<{
     index: number;
     block: SavedData;
-}, typeof BlockAddedMutationType> | MakeConditionalType<{
+} & BlockOpVersion, typeof BlockAddedMutationType> | MakeConditionalType<{
     blockId: string;
-}, typeof BlockRemovedMutationType> | MakeConditionalType<{
+} & BlockOpVersion, typeof BlockRemovedMutationType> | MakeConditionalType<{
     block: SavedData;
     index: number;
-}, typeof BlockChangedMutationType> | MakeConditionalType<{
+} & BlockOpVersion, typeof BlockChangedMutationType> | MakeConditionalType<{
     fromBlockId: string;
     toBlockIndex: number;
     toBlockId: string;
-}, typeof BlockMovedMutationType> | MakeConditionalType<UserInlineSelectionData, typeof UserInlineSelectionChangeType> | MakeConditionalType<{}, typeof UserInlineSelectionAsk> | MakeConditionalType<{
+} & BlockOpVersion, typeof BlockMovedMutationType> | MakeConditionalType<UserInlineSelectionData, typeof UserInlineSelectionChangeType> | MakeConditionalType<{}, typeof UserInlineSelectionAsk> | MakeConditionalType<{
     connectionId: string;
 }, typeof UserDisconnectedType> | MakeConditionalType<{
     connectionId: string;
@@ -101,6 +113,8 @@ export default class GroupCollab {
     private _lockedBlocks;
     private _externalUserSelections;
     private _customToolsInternalState;
+    private _blockVersionClock;
+    private _appliedBlockVersions;
     private ignoreEvents;
     private redactorObserver;
     private toolboxObserver;
@@ -156,6 +170,29 @@ export default class GroupCollab {
     private createFakeCursor;
     private getFakeSelections;
     private createSelectionElement;
+    private static readonly SAFE_ID_PATTERN;
+    private isSafeId;
+    /**
+     * Remote block ids and connection ids are interpolated into attribute/CSS selectors (e.g. querySelector).
+     * Validating them against a conservative character set on receipt prevents selector breakage/injection
+     * from a malformed or malicious peer.
+     */
+    private hasValidRemoteIds;
+    /**
+     * Allocate the next monotonic version for a locally-produced op on `blockId` and record it as
+     * applied (our own edit is already reflected in our editor). The version is derived from the
+     * Lamport clock, so it always outranks anything we have previously observed for that block.
+     */
+    private nextBlockVersion;
+    /** Advance the Lamport clock so our next local edit outranks an observed remote version. */
+    private observeBlockVersion;
+    /**
+     * Decide whether an incoming remote op for `blockId` should be applied, using (version, origin)
+     * as a total order so concurrent edits converge on the same winner across all clients. When the
+     * op wins, its version is recorded as applied. Ops lacking a numeric version (e.g. from an older
+     * peer) are always applied to preserve backwards compatibility.
+     */
+    private acceptRemoteBlockVersion;
     private markExternalUserSeen;
     private startExternalUserInactivityTracking;
     private stopPreviousExternalUserInactivityTracking;

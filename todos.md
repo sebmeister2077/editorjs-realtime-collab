@@ -15,4 +15,4 @@
 - [ ] Add posibility to attach other elements to cursors (e.g. user name tags, or other custom elements). (Research) (Nice to have)
 - [x] ~~Add option to do a sync on network/socket reconnect (as an interface function). (Nice to have, Useful)~~ Users should manually sync the state as all the data is externally available and settable, and the library should not make assumptions about the data management strategy of the user. (Decided)
 - [ ] Possibly add user list display with colors and names. (Nice to have)
-- [ ] Implement conflict resolution strategy for simultaneous edits at same position
+- [x] Implement conflict resolution strategy for simultaneous edits at same position. Per-block Lamport-clock last-write-wins: every block op carries a `version` + `origin`, stale/out-of-order ops are dropped, and concurrent edits converge deterministically via the `(version, origin)` total order. (Note: this is an LWW register per block, not character-level merging/OT.)

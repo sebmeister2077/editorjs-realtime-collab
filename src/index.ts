@@ -62,12 +62,25 @@ type LocalConfig = {
     };
 }
 
+export type BlockOpVersion = {
+    /**
+     * Monotonic per-block Lamport-clock version, used for last-write-wins conflict resolution.
+     * A higher version always supersedes a lower one for the same block id.
+     */
+    version: number
+    /**
+     * connectionId of the client that produced this op. Used as a deterministic tie-breaker when
+     * two ops share the same version, so every client converges on the same winner.
+     */
+    origin: string
+}
+
 export type MessageData =
-    | MakeConditionalType<{ index: number; block: SavedData }, typeof BlockAddedMutationType>
+    | MakeConditionalType<{ index: number; block: SavedData } & BlockOpVersion, typeof BlockAddedMutationType>
     | MakeConditionalType<
         {
             blockId: string
-        },
+        } & BlockOpVersion,
         typeof BlockRemovedMutationType
     >
     | MakeConditionalType<
@@ -75,7 +88,7 @@ export type MessageData =
             block: SavedData
             // in case block.id is not found
             index: number
-        },
+        } & BlockOpVersion,
         typeof BlockChangedMutationType
     >
     | MakeConditionalType<
@@ -84,7 +97,7 @@ export type MessageData =
             //used to guarantee sync between editors
             toBlockIndex: number
             toBlockId: string
-        },
+        } & BlockOpVersion,
         typeof BlockMovedMutationType
     >
     | MakeConditionalType<
@@ -151,6 +164,11 @@ export default class GroupCollab {
     private _lockedBlocks: LockedBlock[] = [];
     private _externalUserSelections: UserInlineSelectionData[] = [];
     private _customToolsInternalState: Record<string, ToolData> = {}
+
+    // Per-block Lamport clock: highest version this client has produced or observed for a block id.
+    private _blockVersionClock: Record<string, number> = {}
+    // Per-block record of the op we have actually applied, used to drop stale/out-of-order ops.
+    private _appliedBlockVersions: Record<string, { version: number; origin: string }> = {}
 
     // events to ignore until next render
     private ignoreEvents: Record<string, Set<Events>> = {}
@@ -513,7 +531,8 @@ export default class GroupCollab {
         this.markExternalUserSeen(response)
         switch (response.type) {
             case 'block-added': {
-                const { index, block } = response
+                const { index, block, version, origin } = response
+                if (!this.acceptRemoteBlockVersion(block.id, version, origin)) break
                 this.addBlockToIgnoreListUntilNextRender(block.id, response.type)
                 this.editor.blocks.insert(block.tool, block.data, null, index, false, false, block.id)
                 const shouldHaveInternalState = this.config.toolsWithDataCheck.includes(block.tool)
@@ -523,7 +542,8 @@ export default class GroupCollab {
                 break
             }
             case 'block-changed': {
-                const { index, block } = response
+                const { index, block, version, origin } = response
+                if (!this.acceptRemoteBlockVersion(block.id, version, origin)) break
                 this.addBlockToIgnoreListUntilNextRender(block.id, response.type)
                 const shouldHaveInternalState = this.config.toolsWithDataCheck.includes(block.tool)
                 if (shouldHaveInternalState) {
@@ -560,7 +580,8 @@ export default class GroupCollab {
                 break
             }
             case 'block-moved': {
-                const { toBlockId, fromBlockId, toBlockIndex } = response
+                const { toBlockId, fromBlockId, toBlockIndex, version } = response
+                this.observeBlockVersion(fromBlockId, version)
                 const toIndex = this.editor.blocks.getBlockIndex(toBlockId)
                 const fromIndex = this.editor.blocks.getBlockIndex(fromBlockId)
 
@@ -579,7 +600,8 @@ export default class GroupCollab {
             }
 
             case 'block-removed': {
-                const { blockId } = response
+                const { blockId, version, origin } = response
+                if (!this.acceptRemoteBlockVersion(blockId, version, origin)) break
                 this.addBlockToIgnoreListUntilNextRender(blockId, response.type)
                 const blockIndex = this.editor.blocks.getBlockIndex(blockId)
                 const blockName = this.editor.blocks.getBlockByIndex(blockIndex)?.name ?? ""
@@ -771,11 +793,15 @@ export default class GroupCollab {
             }
             if (socketData.type === 'block-added') {
                 socketData.index = (otherData as PickFromConditionalType<PossibleEventDetails, 'block-added'>).index
+                socketData.version = this.nextBlockVersion(targetId)
+                socketData.origin = this.socket.connectionId
                 if (shouldBlockHaveInternalState)
                     this._customToolsInternalState[targetId] = { data: savedData.data, tunes: (savedData as any).tunes ?? {} };
             }
             if (socketData.type === 'block-removed') {
                 socketData.blockId = targetId
+                socketData.version = this.nextBlockVersion(targetId)
+                socketData.origin = this.socket.connectionId
                 if (shouldBlockHaveInternalState)
                     delete this._customToolsInternalState[targetId];
             }
@@ -785,6 +811,8 @@ export default class GroupCollab {
                 socketData.toBlockIndex = toIndex
                 //at this point the blocks already switched places
                 socketData.toBlockId = this.editor.blocks.getBlockByIndex(fromIndex)?.id
+                socketData.version = this.nextBlockVersion(targetId)
+                socketData.origin = this.socket.connectionId
             }
             this.socket.send(socketData as MessageData)
         }, 0)
@@ -809,6 +837,8 @@ export default class GroupCollab {
                 type: 'block-changed',
                 block: savedData,
                 index,
+                version: this.nextBlockVersion(targetId),
+                origin: this.socket.connectionId,
             }
 
             if (!this.isListening) return
@@ -918,6 +948,43 @@ export default class GroupCollab {
                 return true
         }
     }
+
+    //#region Block versioning (last-write-wins conflict resolution)
+    /**
+     * Allocate the next monotonic version for a locally-produced op on `blockId` and record it as
+     * applied (our own edit is already reflected in our editor). The version is derived from the
+     * Lamport clock, so it always outranks anything we have previously observed for that block.
+     */
+    private nextBlockVersion(blockId: string): number {
+        const next = (this._blockVersionClock[blockId] ?? 0) + 1
+        this._blockVersionClock[blockId] = next
+        this._appliedBlockVersions[blockId] = { version: next, origin: this.socket.connectionId }
+        return next
+    }
+
+    /** Advance the Lamport clock so our next local edit outranks an observed remote version. */
+    private observeBlockVersion(blockId: string, version: number | undefined) {
+        if (typeof version !== 'number') return
+        if (version > (this._blockVersionClock[blockId] ?? 0))
+            this._blockVersionClock[blockId] = version
+    }
+
+    /**
+     * Decide whether an incoming remote op for `blockId` should be applied, using (version, origin)
+     * as a total order so concurrent edits converge on the same winner across all clients. When the
+     * op wins, its version is recorded as applied. Ops lacking a numeric version (e.g. from an older
+     * peer) are always applied to preserve backwards compatibility.
+     */
+    private acceptRemoteBlockVersion(blockId: string, version: number | undefined, origin: string | undefined): boolean {
+        if (typeof version !== 'number') return true
+        this.observeBlockVersion(blockId, version)
+        const current = this._appliedBlockVersions[blockId]
+        const incomingOrigin = origin ?? ''
+        const isNewer = !current || version > current.version || (version === current.version && incomingOrigin > current.origin)
+        if (isNewer) this._appliedBlockVersions[blockId] = { version, origin: incomingOrigin }
+        return isNewer
+    }
+    //#endregion
 
     private markExternalUserSeen(data: MessageData) {
         if (!('connectionId' in data)) return

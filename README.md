@@ -228,6 +228,22 @@ new RealtimeCollabPlugin({
 - A custom tool triggers change events during interactions with other blocks
 - You want tighter control over lock behavior for specific tools
 
+## Conflict Resolution
+
+Block locking is the first line of defence, but it is advisory and cannot cover every race (two users can start editing before the lock propagates, or messages can arrive out of order). To keep clients convergent, every block mutation (`block-added`, `block-changed`, `block-moved`, `block-removed`) also carries two fields:
+
+- `version` — a monotonic **per-block Lamport-clock** value
+- `origin` — the `connectionId` that produced the op
+
+On receipt, an op is applied only if it is **newer** than the last op already applied for that block id, using `(version, origin)` as a total order:
+
+- A lower `version` than what has been applied is treated as **stale** and dropped — this prevents an out-of-order update from clobbering newer content and prevents a stale change from resurrecting a deleted block.
+- When two ops share the same `version` (concurrent edits), the one with the higher `origin` wins. Because the comparison is deterministic, **every client independently converges on the same result**.
+
+This is a **last-write-wins register per block**, not character-level merging. Two people typing in the same block at the same instant will converge on one of their versions (not a merged union of both keystrokes). For prose-grade concurrent editing you would still want a CRDT/OT layer on top — but stale/out-of-order clobbering and divergence between clients are prevented.
+
+> Ops received without a numeric `version` (for example from an older peer) are always applied, so mixed-version deployments keep working.
+
 ## Programmatic UI Updates
 
 ### Direct Property Modifications
@@ -421,6 +437,8 @@ You generally **do not need to handle these manually** unless:
 - You are proxying messages through a server
 
 - You want to log or transform events
+
+> Block mutation messages also include `version` and `origin` fields used for [conflict resolution](#conflict-resolution). A proxy/relay must pass them through unchanged.
 
 ---
 

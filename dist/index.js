@@ -733,6 +733,7 @@ var update = injectStylesIntoStyleTag_default()(cjs_js_src/* default */.A, optio
 
 ;// ./src/index.ts
 
+// @ts-ignore CSS is loaded by the bundler; TypeScript has no declaration for it.
 
 const UserInlineSelectionAsk = 'inline-selection-request';
 const UserInlineSelectionChangeType = 'inline-selection-change';
@@ -752,6 +753,10 @@ class GroupCollab {
     _lockedBlocks = [];
     _externalUserSelections = [];
     _customToolsInternalState = {};
+    // Per-block Lamport clock: highest version this client has produced or observed for a block id.
+    _blockVersionClock = {};
+    // Per-block record of the op we have actually applied, used to drop stale/out-of-order ops.
+    _appliedBlockVersions = {};
     // events to ignore until next render
     ignoreEvents = {};
     redactorObserver;
@@ -800,7 +805,6 @@ class GroupCollab {
         });
         this.editorStyleElement = document.createElement('style');
         this.setupStyleElement();
-        this.setupThrottledListeners();
         this.initializeCustomToolsState();
     }
     //#region Public API
@@ -845,17 +849,19 @@ class GroupCollab {
         // remove cursors, selections and block lockings
         this.externalUserSelections = [];
         this.lockedBlocks = [];
+        this.emptyThrottledEmiters();
         this._isListening = false;
     }
     /**
      * Start listening for events.
      */
     listen() {
+        this.setupThrottledEmiters();
         this.socket.on(this.onReceiveChange);
         this.editor.on(this.editorBlockEvent, this.onEditorBlockEvent);
         const redactor = this.getRedactor();
         if (!redactor) {
-            console.error("Could not initialize redactor observer.");
+            console.error("Could not initialize redactor observer. (Local block updates are not readable");
             return;
         }
         this.redactorObserver.observe(redactor, {
@@ -872,8 +878,11 @@ class GroupCollab {
                 attributeFilter: ["class"],
                 subtree: true
             });
-        else
-            console.error("Could not initialize toolbox observer.");
+        else {
+            const toolboxSettingsEl = this.getEditorHolder()?.querySelector(`.${this.EditorCSS.toolbarSettings}`);
+            const x = document.querySelector(`.${this.EditorCSS.toolbarSettings}`);
+            console.error("Could not initialize toolbox observer. (Local pending block deletion might not work)");
+        }
         if (this.throttledInlineSelectionChange)
             document.addEventListener('selectionchange', this.throttledInlineSelectionChange);
         document.addEventListener('visibilitychange', this.onVisibilityChange);
@@ -1075,10 +1084,20 @@ class GroupCollab {
     };
     //#region Receive Changes Handling
     onReceiveChange = (response) => {
+        // A correct relay must never echo a sender's own messages back to it (see README "Server/relay requirements"),
+        // but we still drop self-origin messages here to stay resilient against a misbehaving transport that does echo.
+        if ('connectionId' in response && response.connectionId === this.socket.connectionId)
+            return;
+        // Remote-controlled ids flow into DOM/attribute selectors further down, so reject any message
+        // carrying a malformed id before it can reach querySelector.
+        if (!this.hasValidRemoteIds(response))
+            return;
         this.markExternalUserSeen(response);
         switch (response.type) {
             case 'block-added': {
-                const { index, block } = response;
+                const { index, block, version, origin } = response;
+                if (!this.acceptRemoteBlockVersion(block.id, version, origin))
+                    break;
                 this.addBlockToIgnoreListUntilNextRender(block.id, response.type);
                 this.editor.blocks.insert(block.tool, block.data, null, index, false, false, block.id);
                 const shouldHaveInternalState = this.config.toolsWithDataCheck.includes(block.tool);
@@ -1088,7 +1107,9 @@ class GroupCollab {
                 break;
             }
             case 'block-changed': {
-                const { index, block } = response;
+                const { index, block, version, origin } = response;
+                if (!this.acceptRemoteBlockVersion(block.id, version, origin))
+                    break;
                 this.addBlockToIgnoreListUntilNextRender(block.id, response.type);
                 const shouldHaveInternalState = this.config.toolsWithDataCheck.includes(block.tool);
                 if (shouldHaveInternalState) {
@@ -1124,7 +1145,8 @@ class GroupCollab {
                 break;
             }
             case 'block-moved': {
-                const { toBlockId, fromBlockId, toBlockIndex } = response;
+                const { toBlockId, fromBlockId, toBlockIndex, version } = response;
+                this.observeBlockVersion(fromBlockId, version);
                 const toIndex = this.editor.blocks.getBlockIndex(toBlockId);
                 const fromIndex = this.editor.blocks.getBlockIndex(fromBlockId);
                 const blocksAreNowInSync = toBlockIndex === fromIndex;
@@ -1137,7 +1159,9 @@ class GroupCollab {
                 break;
             }
             case 'block-removed': {
-                const { blockId } = response;
+                const { blockId, version, origin } = response;
+                if (!this.acceptRemoteBlockVersion(blockId, version, origin))
+                    break;
                 this.addBlockToIgnoreListUntilNextRender(blockId, response.type);
                 const blockIndex = this.editor.blocks.getBlockIndex(blockId);
                 const blockName = this.editor.blocks.getBlockByIndex(blockIndex)?.name ?? "";
@@ -1314,11 +1338,15 @@ class GroupCollab {
             };
             if (socketData.type === 'block-added') {
                 socketData.index = otherData.index;
+                socketData.version = this.nextBlockVersion(targetId);
+                socketData.origin = this.socket.connectionId;
                 if (shouldBlockHaveInternalState)
                     this._customToolsInternalState[targetId] = { data: savedData.data, tunes: savedData.tunes ?? {} };
             }
             if (socketData.type === 'block-removed') {
                 socketData.blockId = targetId;
+                socketData.version = this.nextBlockVersion(targetId);
+                socketData.origin = this.socket.connectionId;
                 if (shouldBlockHaveInternalState)
                     delete this._customToolsInternalState[targetId];
             }
@@ -1328,12 +1356,14 @@ class GroupCollab {
                 socketData.toBlockIndex = toIndex;
                 //at this point the blocks already switched places
                 socketData.toBlockId = this.editor.blocks.getBlockByIndex(fromIndex)?.id;
+                socketData.version = this.nextBlockVersion(targetId);
+                socketData.origin = this.socket.connectionId;
             }
             this.socket.send(socketData);
         }, 0);
     };
     //#region Throttled & Debounced Handlers
-    setupThrottledListeners() {
+    setupThrottledEmiters() {
         this.throttledInlineSelectionChange = throttle(this.config.blockChangeThrottleDelay, (event) => {
             if (!this.isListening)
                 return;
@@ -1351,12 +1381,18 @@ class GroupCollab {
                 type: 'block-changed',
                 block: savedData,
                 index,
+                version: this.nextBlockVersion(targetId),
+                origin: this.socket.connectionId,
             };
             if (!this.isListening)
                 return;
             this.socket.send(socketData);
             this.addBlockToIgnoreListUntilNextRender(targetId, 'block-changed');
         });
+    }
+    emptyThrottledEmiters() {
+        this.throttledBlockChange = undefined;
+        this.throttledInlineSelectionChange = undefined;
     }
     debouncedBlockUnlocking(blockId, connectionId) {
         const debouncedFunc = this._debouncedBlockUnlockingsMap?.[blockId];
@@ -1411,6 +1447,75 @@ class GroupCollab {
             selection.classList.add(this.config.overrideStyles.inlineSelectionClass);
         return selection;
     }
+    static SAFE_ID_PATTERN = /^[\w.:-]{1,256}$/;
+    isSafeId(value) {
+        return typeof value === 'string' && GroupCollab.SAFE_ID_PATTERN.test(value);
+    }
+    /**
+     * Remote block ids and connection ids are interpolated into attribute/CSS selectors (e.g. querySelector).
+     * Validating them against a conservative character set on receipt prevents selector breakage/injection
+     * from a malformed or malicious peer.
+     */
+    hasValidRemoteIds(response) {
+        switch (response.type) {
+            case 'block-added':
+            case 'block-changed':
+                return this.isSafeId(response.block?.id);
+            case 'block-removed':
+            case 'block-selection-change':
+            case 'block-deletion-change':
+                return this.isSafeId(response.blockId);
+            case 'block-moved':
+                return this.isSafeId(response.fromBlockId) && this.isSafeId(response.toBlockId);
+            case 'block-locked':
+            case 'block-unlocked':
+                return this.isSafeId(response.blockId) && this.isSafeId(response.connectionId);
+            case 'inline-selection-change':
+                return this.isSafeId(response.blockId) && this.isSafeId(response.connectionId);
+            case 'user-disconnected':
+            case 'user-presence-ping':
+                return this.isSafeId(response.connectionId);
+            default:
+                return true;
+        }
+    }
+    //#region Block versioning (last-write-wins conflict resolution)
+    /**
+     * Allocate the next monotonic version for a locally-produced op on `blockId` and record it as
+     * applied (our own edit is already reflected in our editor). The version is derived from the
+     * Lamport clock, so it always outranks anything we have previously observed for that block.
+     */
+    nextBlockVersion(blockId) {
+        const next = (this._blockVersionClock[blockId] ?? 0) + 1;
+        this._blockVersionClock[blockId] = next;
+        this._appliedBlockVersions[blockId] = { version: next, origin: this.socket.connectionId };
+        return next;
+    }
+    /** Advance the Lamport clock so our next local edit outranks an observed remote version. */
+    observeBlockVersion(blockId, version) {
+        if (typeof version !== 'number')
+            return;
+        if (version > (this._blockVersionClock[blockId] ?? 0))
+            this._blockVersionClock[blockId] = version;
+    }
+    /**
+     * Decide whether an incoming remote op for `blockId` should be applied, using (version, origin)
+     * as a total order so concurrent edits converge on the same winner across all clients. When the
+     * op wins, its version is recorded as applied. Ops lacking a numeric version (e.g. from an older
+     * peer) are always applied to preserve backwards compatibility.
+     */
+    acceptRemoteBlockVersion(blockId, version, origin) {
+        if (typeof version !== 'number')
+            return true;
+        this.observeBlockVersion(blockId, version);
+        const current = this._appliedBlockVersions[blockId];
+        const incomingOrigin = origin ?? '';
+        const isNewer = !current || version > current.version || (version === current.version && incomingOrigin > current.origin);
+        if (isNewer)
+            this._appliedBlockVersions[blockId] = { version, origin: incomingOrigin };
+        return isNewer;
+    }
+    //#endregion
     markExternalUserSeen(data) {
         if (!('connectionId' in data))
             return;
@@ -1637,8 +1742,16 @@ class GroupCollab {
         const blockContent = this.getDOMBlockById(blockId)?.querySelector(`.${this.EditorCSS.blockContent}`);
         if (!blockContent)
             return;
-        // Resolve XPath to actual DOM element
-        const parentElement = editorHolder.querySelector(elementXPath);
+        // Resolve XPath to actual DOM element. The selector is remote-controlled, so a malformed
+        // value could throw a SyntaxError; guard it instead of letting it break rendering.
+        let parentElement = null;
+        try {
+            parentElement = editorHolder.querySelector(elementXPath);
+        }
+        catch (e) {
+            console.error('Failed to resolve remote selection XPath selector.', { cause: e });
+            return;
+        }
         if (!(parentElement instanceof HTMLElement))
             return;
         const nodeElement = parentElement.childNodes[elementNodeIndex];
