@@ -78,6 +78,18 @@ interface INeededSocketFields {
 
 - Used to associate cursors & selections with users
 
+- Must match `^[\w.:-]{1,256}$` (letters, digits, `_`, `.`, `:`, `-`). Messages whose `connectionId` (or any block id) falls outside this set are dropped on receipt, because these values are interpolated into DOM selectors.
+
+### Server / relay requirements
+
+The plugin assumes your transport (the server/relay that `send()` publishes to and `on()` receives from) behaves like a well-ordered broadcast:
+
+- **Do not echo a sender's own messages back to it.** The plugin defensively drops messages whose `connectionId` matches the local one, but messages that don't carry a `connectionId` (such as `block-added` / `block-changed`) rely on the relay not echoing to the originator.
+
+- **Deliver messages in order.** There is no sequence/version negotiation yet, so out-of-order delivery of block updates can apply stale data.
+
+- **Broadcast to all other connected peers** so every client converges on the same state.
+
 ## Configuration Options
 
 ```ts

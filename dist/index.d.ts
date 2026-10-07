@@ -149,7 +149,8 @@ export default class GroupCollab {
     private onWindowBlur;
     private onReceiveChange;
     private onEditorBlockEvent;
-    private setupThrottledListeners;
+    private setupThrottledEmiters;
+    private emptyThrottledEmiters;
     private debouncedBlockUnlocking;
     private getFakeCursors;
     private createFakeCursor;
